@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from contextvault.cli.commands import (
     system, context, permissions, templates, 
-    test, demo, diagnose, config, setup, mcp
+    test, demo, diagnose, config, setup, mcp, learning
 )
 
 @click.group()
@@ -41,6 +41,7 @@ cli.add_command(demo.demo_group)
 cli.add_command(diagnose.diagnose_group)
 cli.add_command(config.config_group)
 cli.add_command(mcp.mcp_group)
+cli.add_command(learning.learning_group)
 
 if __name__ == "__main__":
     cli()

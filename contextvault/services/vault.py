@@ -76,38 +76,49 @@ class VaultService:
             if self.db_session:
                 # Use existing session (caller manages commits)
                 db = self.db_session
-                should_commit = False
-            else:
-                # Create new session context (we manage commits)
-                db = next(get_db_context())
-                should_commit = True
-            
-            entry = ContextEntry(
-                content=content.strip(),
-                context_type=context_type,
-                source=source,
-                tags=clean_tags if clean_tags else None,
-                entry_metadata=metadata or {},
-                user_id=user_id,
-                session_id=session_id,
-            )
-            
-            db.add(entry)
-            if should_commit:
-                db.commit()
-                db.refresh(entry)
-            else:
+                
+                entry = ContextEntry(
+                    content=content.strip(),
+                    context_type=context_type,
+                    source=source,
+                    tags=clean_tags if clean_tags else None,
+                    entry_metadata=metadata or {},
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+                
+                db.add(entry)
                 db.flush()  # Ensure ID is generated
                 db.refresh(entry)
-            
-            # Access entry attributes while still in session
-            entry_id = entry.id
-            
-            logger.info(
-                f"Context entry saved: {entry_id}, type={context_type}, length={len(content)}, tags={clean_tags}"
-            )
-            
-            return entry
+                
+                logger.info(
+                    f"Context entry saved: {entry.id}, type={context_type}, length={len(content)}, tags={clean_tags}"
+                )
+                
+                return entry
+                
+            else:
+                # Create new session context (we manage commits)
+                with get_db_context() as db:
+                    entry = ContextEntry(
+                        content=content.strip(),
+                        context_type=context_type,
+                        source=source,
+                        tags=clean_tags if clean_tags else None,
+                        entry_metadata=metadata or {},
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                    
+                    db.add(entry)
+                    db.commit()
+                    db.refresh(entry)
+                    
+                    logger.info(
+                        f"Context entry saved: {entry.id}, type={context_type}, length={len(content)}, tags={clean_tags}"
+                    )
+                    
+                    return entry
                 
         except Exception as e:
             logger.error(f"Failed to save context entry: {str(e)}", exc_info=True)

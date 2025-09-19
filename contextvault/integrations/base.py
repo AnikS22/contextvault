@@ -284,6 +284,18 @@ class BaseIntegration(ABC):
                     content=body,
                 )
                 
+                # Learn from conversation if successful
+                if response.status_code == 200 and session and inject_context:
+                    try:
+                        await self._learn_from_conversation(
+                            request_data, 
+                            response.content, 
+                            model_id, 
+                            session_id
+                        )
+                    except Exception as e:
+                        self.logger.warning(f"Conversation learning failed: {e}")
+                
                 # Complete session tracking
                 if session:
                     session.complete_session(
@@ -322,6 +334,73 @@ class BaseIntegration(ABC):
                     pass
             
             raise
+    
+    async def _learn_from_conversation(
+        self,
+        request_data: Dict[str, Any],
+        response_content: bytes,
+        model_id: str,
+        session_id: Optional[str]
+    ) -> None:
+        """Learn from conversation by extracting context from prompts and responses."""
+        try:
+            from ..services.conversation_learning import conversation_learning_service
+            
+            # Extract user prompt
+            user_prompt = self._extract_user_prompt(request_data)
+            if not user_prompt:
+                return
+            
+            # Extract AI response
+            ai_response = ""
+            try:
+                response_data = json.loads(response_content.decode('utf-8'))
+                
+                # Handle streaming response
+                if isinstance(response_data, list):
+                    # Concatenate all response chunks
+                    ai_response = "".join([chunk.get("response", "") for chunk in response_data])
+                elif isinstance(response_data, dict):
+                    ai_response = response_data.get("response", "")
+                    
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                # Try to extract text from raw response
+                try:
+                    ai_response = response_content.decode('utf-8')
+                except UnicodeDecodeError:
+                    return
+            
+            if not ai_response:
+                return
+            
+            # Learn from the conversation
+            await conversation_learning_service.learn_from_conversation(
+                user_prompt=user_prompt,
+                ai_response=ai_response,
+                model_id=model_id,
+                session_id=session_id,
+                user_id=None  # TODO: Add user ID support
+            )
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to learn from conversation: {e}")
+    
+    def _extract_user_prompt(self, request_data: Dict[str, Any]) -> Optional[str]:
+        """Extract user prompt from request data."""
+        # /api/generate endpoint
+        if "prompt" in request_data:
+            return request_data["prompt"]
+        
+        # /api/chat endpoint
+        if "messages" in request_data:
+            messages = request_data["messages"]
+            if messages and isinstance(messages, list):
+                # Get the last user message
+                for message in reversed(messages):
+                    if isinstance(message, dict) and message.get("role") == "user":
+                        return message.get("content", "")
+        
+        return None
     
     def __str__(self) -> str:
         """String representation of the integration."""
