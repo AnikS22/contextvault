@@ -1,5 +1,9 @@
 # ContextVault 🧠
 
+[![GitHub](https://img.shields.io/badge/GitHub-ContextVault-blue?logo=github)](https://github.com/AnikS22/contextvault)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
+
 **AI Memory for Local AI Models**
 
 ContextVault gives your local AI models persistent memory, transforming them from generic chatbots into personal assistants that actually know you.
@@ -24,7 +28,7 @@ ContextVault is a proxy that sits between you and your local AI models (Ollama, 
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/contextvault.git
+git clone https://github.com/AnikS22/contextvault.git
 cd contextvault
 
 # Install dependencies
