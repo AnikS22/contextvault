@@ -14,7 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import settings, validate_environment
 from .database import init_database, check_database_connection
-from .api import context, permissions, health
+from .api import context, permissions, health, routing, thinking, graph_rag
 # from .api import mcp  # Temporarily disabled
 from .schemas.responses import ErrorResponse
 from .services.semantic_search import initialize_semantic_search
@@ -173,7 +173,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             error="http_error",
             message=exc.detail,
             details={"status_code": exc.status_code}
-        ).dict()
+        ).model_dump(mode='json')
     )
 
 
@@ -224,6 +224,24 @@ app.include_router(
     permissions.router,
     prefix="/api/permissions",
     tags=["Permission Management"]
+)
+
+app.include_router(
+    routing.router,
+    prefix="/api/routing",
+    tags=["Multi-Model Routing"]
+)
+
+app.include_router(
+    thinking.router,
+    prefix="/api/thinking",
+    tags=["Extended Thinking"]
+)
+
+app.include_router(
+    graph_rag.router,
+    prefix="/api",
+    tags=["Graph RAG"]
 )
 
 # app.include_router(

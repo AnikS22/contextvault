@@ -2,11 +2,13 @@
 
 # Import all command modules
 from . import (
-    system, context, permissions, templates, 
-    test, demo, diagnose, config, setup
+    system, context, permissions, templates,
+    test, demo, diagnose, config, setup, mcp, learning,
+    settings, feed, recall, graph_rag
 )
 
 __all__ = [
     'system', 'context', 'permissions', 'templates',
-    'test', 'demo', 'diagnose', 'config', 'setup'
+    'test', 'demo', 'diagnose', 'config', 'setup', 'mcp', 'learning',
+    'settings', 'feed', 'recall', 'graph_rag'
 ]

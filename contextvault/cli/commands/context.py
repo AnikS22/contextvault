@@ -1,12 +1,16 @@
 """Context management commands for ContextVault CLI."""
 
 import requests
+import time
 from typing import Optional, List
 
 import click
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+from rich.text import Text
+from rich import box
 
 console = Console()
 
@@ -17,41 +21,69 @@ def context_group():
 
 @context_group.command()
 @click.argument('content')
-@click.option('--type', 'context_type', default='note', help='Context type (note, preference, etc.)')
+@click.option('--type', 'context_type',
+              type=click.Choice(['text', 'file', 'event', 'preference', 'note', 'personal', 'work', 'preferences'], case_sensitive=False),
+              default='note',
+              help='Context type (text/file/event/preference/note/personal/work/preferences)')
 @click.option('--source', default='cli', help='Source of the context')
 @click.option('--tags', help='Comma-separated tags')
 def add(content: str, context_type: str, source: str, tags: Optional[str]):
     """Add a new context entry."""
-    console.print("📝 [bold blue]Adding Context Entry[/bold blue]")
-    
-    try:
-        # Prepare tags
-        tag_list = [tag.strip() for tag in tags.split(',')] if tags else []
-        
-        # Add context via API
-        response = requests.post('http://localhost:11435/api/context/add', json={
-            'content': content,
-            'context_type': context_type,
-            'source': source,
-            'tags': tag_list
-        })
-        
-        if response.status_code == 200:
-            result = response.json()
-            console.print(f"✅ [green]Context added successfully[/green]")
-            console.print(f"   ID: {result.get('data', {}).get('id', 'unknown')}")
-        else:
-            console.print(f"❌ [red]Failed to add context: {response.status_code}[/red]")
-            
-    except requests.exceptions.ConnectionError:
-        console.print("❌ [red]ContextVault proxy not running[/red]")
-        console.print("   Start it with: python -m contextvault.cli start")
-    except Exception as e:
-        console.print(f"❌ [red]Error adding context: {e}[/red]")
+
+    with Progress(
+        SpinnerColumn(spinner_name="dots"),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("✨ Adding context entry...", total=None)
+
+        try:
+            # Prepare tags
+            tag_list = [tag.strip() for tag in tags.split(',')] if tags else []
+
+            # Add context via API
+            response = requests.post('http://localhost:11435/api/context/', json={
+                'content': content,
+                'context_type': context_type,
+                'source': source,
+                'tags': tag_list
+            })
+
+            time.sleep(0.3)  # Brief pause for effect
+
+            if response.status_code == 200:
+                result = response.json()
+                progress.update(task, description="✅ Context added successfully!")
+                time.sleep(0.2)
+                console.print()
+                console.print(Panel(
+                    f"[bold cyan]ID:[/bold cyan] {result.get('data', {}).get('id', 'unknown')}\n"
+                    f"[bold cyan]Type:[/bold cyan] {context_type}\n"
+                    f"[bold cyan]Content:[/bold cyan] {content[:60]}..." if len(content) > 60 else f"[bold cyan]Content:[/bold cyan] {content}",
+                    title="✨ New Context Entry",
+                    border_style="green",
+                    box=box.ROUNDED
+                ))
+            else:
+                progress.update(task, description="❌ Failed to add context")
+                time.sleep(0.2)
+                console.print(f"\n❌ [red]Failed to add context: {response.status_code}[/red]")
+
+        except requests.exceptions.ConnectionError:
+            progress.update(task, description="❌ Connection failed")
+            time.sleep(0.2)
+            console.print("\n❌ [red]ContextVault proxy not running[/red]")
+            console.print("   Start it with: [bold]contextible start[/bold]")
+        except Exception as e:
+            progress.update(task, description="❌ Error occurred")
+            time.sleep(0.2)
+            console.print(f"\n❌ [red]Error adding context: {e}[/red]")
 
 @context_group.command()
 @click.option('--limit', default=10, help='Number of entries to show')
-@click.option('--type', 'context_type', help='Filter by context type')
+@click.option('--type', 'context_type',
+              type=click.Choice(['text', 'file', 'event', 'preference', 'note', 'personal', 'work', 'preferences'], case_sensitive=False),
+              help='Filter by context type')
 def list(limit: int, context_type: Optional[str]):
     """List context entries."""
     console.print("📋 [bold blue]Context Entries[/bold blue]")
@@ -62,10 +94,10 @@ def list(limit: int, context_type: Optional[str]):
         if context_type:
             params['context_type'] = context_type
         
-        response = requests.get('http://localhost:11435/api/context/list', params=params)
+        response = requests.get('http://localhost:11435/api/context/', params=params)
         
         if response.status_code == 200:
-            data = response.json().get('data', [])
+            data = response.json().get('entries', [])  # API returns 'entries' not 'data'
             
             if data:
                 table = Table(title="Context Entries")
@@ -105,43 +137,75 @@ def list(limit: int, context_type: Optional[str]):
 @click.option('--show-scores', is_flag=True, help='Show similarity scores')
 def search(query: str, limit: int, show_scores: bool):
     """Search context entries."""
-    console.print(f"🔍 [bold blue]Searching: '{query}'[/bold blue]")
-    
-    try:
-        response = requests.get('http://localhost:11435/api/context/search', params={
-            'query': query,
-            'limit': limit
-        })
-        
-        if response.status_code == 200:
-            data = response.json().get('data', [])
-            
-            if data:
-                for i, entry in enumerate(data, 1):
-                    panel_content = f"""[bold]Content:[/bold] {entry['content']}
+
+    with Progress(
+        SpinnerColumn(spinner_name="arc"),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"🔍 Searching for '{query}'...", total=None)
+
+        try:
+            response = requests.get(f'http://localhost:11435/api/context/search/{query}', params={
+                'limit': limit
+            })
+
+            time.sleep(0.3)  # Brief pause for effect
+
+            if response.status_code == 200:
+                data = response.json().get('entries', [])  # API returns 'entries' not 'data'
+
+                progress.update(task, description=f"✅ Found {len(data)} result(s)!")
+                time.sleep(0.2)
+                console.print()
+
+                if data:
+                    # Animate results appearing
+                    for i, entry in enumerate(data, 1):
+                        # Color based on position
+                        colors = ["cyan", "blue", "magenta", "green", "yellow"]
+                        border_color = colors[(i-1) % len(colors)]
+
+                        panel_content = f"""[bold]Content:[/bold] {entry['content']}
 [bold]Type:[/bold] {entry['context_type']}
 [bold]Source:[/bold] {entry['source']}
 [bold]Tags:[/bold] {', '.join(entry.get('tags', []))}"""
-                    
-                    if show_scores and 'similarity_score' in entry:
-                        panel_content += f"\n[bold]Similarity:[/bold] {entry['similarity_score']:.3f}"
-                    
-                    panel = Panel(
-                        panel_content,
-                        title=f"Result {i}",
-                        border_style="blue"
-                    )
-                    console.print(panel)
+
+                        if show_scores and 'similarity_score' in entry:
+                            score = entry['similarity_score']
+                            # Color code the score
+                            if score > 0.8:
+                                score_color = "green"
+                            elif score > 0.5:
+                                score_color = "yellow"
+                            else:
+                                score_color = "red"
+                            panel_content += f"\n[bold]Similarity:[/bold] [{score_color}]{score:.3f}[/{score_color}]"
+
+                        panel = Panel(
+                            panel_content,
+                            title=f"🎯 Result {i}",
+                            border_style=border_color,
+                            box=box.ROUNDED
+                        )
+                        console.print(panel)
+                        time.sleep(0.1)  # Animate each result
+                else:
+                    console.print("ℹ️  [yellow]No matching context found[/yellow]")
             else:
-                console.print("ℹ️ [yellow]No matching context found[/yellow]")
-        else:
-            console.print(f"❌ [red]Search failed: {response.status_code}[/red]")
-            
-    except requests.exceptions.ConnectionError:
-        console.print("❌ [red]ContextVault proxy not running[/red]")
-        console.print("   Start it with: python -m contextvault.cli start")
-    except Exception as e:
-        console.print(f"❌ [red]Error searching context: {e}[/red]")
+                progress.update(task, description="❌ Search failed")
+                time.sleep(0.2)
+                console.print(f"\n❌ [red]Search failed: {response.status_code}[/red]")
+
+        except requests.exceptions.ConnectionError:
+            progress.update(task, description="❌ Connection failed")
+            time.sleep(0.2)
+            console.print("\n❌ [red]ContextVault proxy not running[/red]")
+            console.print("   Start it with: [bold]contextible start[/bold]")
+        except Exception as e:
+            progress.update(task, description="❌ Error occurred")
+            time.sleep(0.2)
+            console.print(f"\n❌ [red]Error searching context: {e}[/red]")
 
 @context_group.command()
 @click.argument('context_id')
@@ -176,10 +240,10 @@ def stats():
     
     try:
         # Get all context entries
-        response = requests.get('http://localhost:11435/api/context/list', params={'limit': 1000})
+        response = requests.get('http://localhost:11435/api/context/', params={'limit': 1000})
         
         if response.status_code == 200:
-            data = response.json().get('data', [])
+            data = response.json().get('entries', [])  # API returns 'entries' not 'data'
             
             # Calculate statistics
             total_entries = len(data)
@@ -189,15 +253,17 @@ def stats():
             
             for entry in data:
                 # Count by type
-                ctx_type = entry['context_type']
+                ctx_type = entry.get('context_type', 'unknown')
                 context_types[ctx_type] = context_types.get(ctx_type, 0) + 1
-                
+
                 # Count by source
-                source = entry['source']
+                source = entry.get('source') or 'unknown'
                 sources[source] = sources.get(source, 0) + 1
-                
-                # Collect tags
-                total_tags.update(entry.get('tags', []))
+
+                # Collect tags (handle None safely)
+                tags = entry.get('tags')
+                if tags:
+                    total_tags.update(tags)
             
             # Display statistics
             stats_panel = Panel(

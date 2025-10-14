@@ -53,8 +53,8 @@ async def get_permissions(
     query = query.offset(offset).limit(limit)
     
     permissions = query.all()
-    
-    return [PermissionResponse.from_orm(perm) for perm in permissions]
+
+    return [PermissionResponse.model_validate(perm) for perm in permissions]
 
 
 @router.post("/", response_model=PermissionResponse)
@@ -71,14 +71,14 @@ async def create_permission(
     
     if existing:
         # Update existing permission instead of creating duplicate
-        for field, value in permission_data.dict(exclude_unset=True).items():
+        for field, value in permission_data.model_dump(exclude_unset=True).items():
             setattr(existing, field, value)
         
         existing.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(existing)
-        
-        return PermissionResponse.from_orm(existing)
+
+        return PermissionResponse.model_validate(existing)
     
     try:
         # Create new permission
@@ -96,9 +96,9 @@ async def create_permission(
         db.add(permission)
         db.commit()
         db.refresh(permission)
-        
-        return PermissionResponse.from_orm(permission)
-        
+
+        return PermissionResponse.model_validate(permission)
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Failed to create permission: {str(e)}")
@@ -115,8 +115,8 @@ async def get_permission(
     
     if not permission:
         raise HTTPException(status_code=404, detail="Permission not found")
-    
-    return PermissionResponse.from_orm(permission)
+
+    return PermissionResponse.model_validate(permission)
 
 
 @router.put("/{permission_id}", response_model=PermissionResponse)
@@ -134,19 +134,19 @@ async def update_permission(
     
     try:
         # Update fields that were provided
-        update_dict = update_data.dict(exclude_unset=True)
-        
+        update_dict = update_data.model_dump(exclude_unset=True)
+
         for field, value in update_dict.items():
             setattr(permission, field, value)
         
         # Update timestamp
         permission.updated_at = datetime.utcnow()
-        
+
         db.commit()
         db.refresh(permission)
-        
-        return PermissionResponse.from_orm(permission)
-        
+
+        return PermissionResponse.model_validate(permission)
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Failed to update permission: {str(e)}")

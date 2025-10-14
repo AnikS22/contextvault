@@ -35,10 +35,19 @@ pytest-asyncio==0.21.1
 httpx==0.25.2
 
 # Semantic Search & Embeddings
-sentence-transformers==2.2.2
-numpy==1.24.3
-torch==2.1.0
-transformers==4.35.0
+sentence-transformers>=5.1.0
+numpy>=2.3.0
+torch>=2.1.0
+transformers>=4.56.0
+scikit-learn>=1.7.0
+
+# Graph RAG Dependencies
+neo4j>=6.0.0
+spacy>=3.8.0
+pandas>=2.3.0
+
+# Vector Database
+chromadb>=1.1.0
 
 # Dashboard & Web Interface
 jinja2==3.1.2

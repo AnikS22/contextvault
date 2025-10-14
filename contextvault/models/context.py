@@ -18,6 +18,9 @@ class ContextType(str, Enum):
     EVENT = "event"
     PREFERENCE = "preference"
     NOTE = "note"
+    PERSONAL = "personal"
+    WORK = "work"
+    PREFERENCES = "preferences"  # Common variant
 
 
 class ContextEntry(Base):
@@ -46,10 +49,10 @@ class ContextEntry(Base):
     )
     
     context_type: Mapped[ContextType] = mapped_column(
-        Enum("text", "file", "event", "preference", "note", name="context_type_enum"), 
-        nullable=False, 
+        Enum("text", "file", "event", "preference", "note", "personal", "work", "preferences", name="context_type_enum"),
+        nullable=False,
         default=ContextType.TEXT,
-        comment="Type of context (text, file, event, preference, note)"
+        comment="Type of context (text, file, event, preference, note, personal, work, preferences)"
     )
     
     source: Mapped[Optional[str]] = mapped_column(

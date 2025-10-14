@@ -2,27 +2,43 @@
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich import box
 
 console = Console()
 
 @click.command()
 def setup():
-    """Initialize ContextVault for first-time use."""
-    console.print("🚀 [bold blue]ContextVault Setup[/bold blue]")
-    console.print("=" * 40)
+    """Initialize Contextible for first-time use."""
+
+    # Show animated header
+    console.print("\n[bold cyan]✨ Contextible Setup Wizard ✨[/bold cyan]\n", justify="center")
+    time.sleep(0.3)
     
-    # Check Python version
-    python_version = sys.version_info
-    if python_version.major < 3 or (python_version.major == 3 and python_version.minor < 8):
-        console.print(f"❌ [red]Python {python_version.major}.{python_version.minor} found, but 3.8+ is required[/red]")
-        return
-    
-    console.print(f"✅ [green]Python {python_version.major}.{python_version.minor}.{python_version.micro} is compatible[/green]")
+    with Progress(
+        SpinnerColumn(spinner_name="dots"),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        # Check Python version
+        task = progress.add_task("🐍 Checking Python version...", total=None)
+        time.sleep(0.5)
+
+        python_version = sys.version_info
+        if python_version.major < 3 or (python_version.major == 3 and python_version.minor < 8):
+            progress.update(task, description=f"❌ Python {python_version.major}.{python_version.minor} found (need 3.8+)")
+            console.print(f"\n❌ [red]Python {python_version.major}.{python_version.minor} found, but 3.8+ is required[/red]")
+            return
+
+        progress.update(task, description=f"✅ Python {python_version.major}.{python_version.minor}.{python_version.micro}")
+
+    console.print()
     
     # Check dependencies
     console.print("\n📦 [blue]Checking dependencies...[/blue]")
@@ -47,12 +63,12 @@ def setup():
     
     # Check optional dependencies
     console.print("\n📦 [blue]Checking optional dependencies...[/blue]")
-    
+
     optional_packages = {
         "sentence_transformers": "Semantic search (recommended)",
         "sklearn": "Fallback semantic search (required if sentence_transformers missing)"
     }
-    
+
     for package, description in optional_packages.items():
         try:
             __import__(package)
@@ -64,6 +80,48 @@ def setup():
             else:
                 console.print(f"   ⚠️ {package} - {description}")
                 console.print("   Install with: pip install sentence-transformers")
+
+    # Check Graph RAG dependencies
+    console.print("\n🔗 [blue]Checking Graph RAG dependencies...[/blue]")
+
+    graph_rag_packages = {
+        "neo4j": "Neo4j graph database driver",
+        "spacy": "Entity extraction for Graph RAG",
+        "pandas": "Data processing for Graph RAG"
+    }
+
+    graph_rag_available = True
+    for package, description in graph_rag_packages.items():
+        try:
+            __import__(package)
+            console.print(f"   ✅ {package} - {description}")
+        except ImportError:
+            console.print(f"   ⚠️ {package} - {description}")
+            console.print(f"   Install with: pip install {package}")
+            graph_rag_available = False
+
+    # Check spaCy model if spacy is installed
+    try:
+        import spacy
+        try:
+            spacy.load("en_core_web_sm")
+            console.print("   ✅ spacy model (en_core_web_sm)")
+        except:
+            console.print("   ⚠️ spacy model (en_core_web_sm) not found")
+            console.print("   Install with: python -m spacy download en_core_web_sm")
+            graph_rag_available = False
+    except ImportError:
+        pass
+
+    # Check Neo4j availability
+    if graph_rag_available:
+        try:
+            import requests
+            response = requests.get("http://localhost:7474", timeout=2)
+            console.print("   ✅ Neo4j is running (http://localhost:7474)")
+        except:
+            console.print("   ⚠️ Neo4j is not running")
+            console.print("   Start with: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password neo4j")
     
     # Check Ollama
     console.print("\n🤖 [blue]Checking Ollama...[/blue]")
@@ -164,28 +222,40 @@ def setup():
             else:
                 console.print("   ✅ Context entries already exist")
         
-        console.print("\n🎉 [bold green]ContextVault setup complete![/bold green]")
-        
+        time.sleep(0.3)
+        console.print("\n" + "="*60)
+        console.print("🎉 [bold green]Setup Complete! Contextible is ready to use![/bold green]", justify="center")
+        console.print("="*60 + "\n")
+
         # Show next steps
         console.print(Panel(
-            """[bold]Next Steps:[/bold]
+            """[bold cyan]🚀 Quick Start Guide[/bold cyan]
 
-1. Start ContextVault:
-   [blue]python -m contextvault.cli start[/blue]
+[bold]1. Start the Proxy:[/bold]
+   [yellow]contextible start[/yellow]
 
-2. Test it works:
-   [blue]python -m contextvault.cli test[/blue]
+   This starts Contextible on port 11435
+   (Ollama runs on 11434)
 
-3. Run a demo:
-   [blue]python -m contextvault.cli demo[/blue]
+[bold]2. Add Some Context:[/bold]
+   [yellow]contextible context add "I love Python and FastAPI"[/yellow]
+   [yellow]contextible context add "I'm working on an AI project" --type note[/yellow]
 
-4. Use ContextVault:
-   Instead of: curl http://localhost:11434/api/generate ...
-   Use:        curl http://localhost:11435/api/generate ...
+[bold]3. Check It Works:[/bold]
+   [yellow]contextible system status[/yellow]
+   [yellow]contextible context list[/yellow]
 
-[bold]ContextVault is ready to give your AI models persistent memory! 🧠[/bold]""",
-            title="🚀 Setup Complete",
-            border_style="green"
+[bold]4. Search Your Memory:[/bold]
+   [yellow]contextible context search "python"[/yellow]
+
+[bold]5. Use With Your AI:[/bold]
+   Point your AI client to [cyan]http://localhost:11435[/cyan]
+   instead of [dim]http://localhost:11434[/dim]
+
+[bold green]✨ Your AI now has memory![/bold green]""",
+            title="✨ Next Steps",
+            border_style="cyan",
+            box=box.ROUNDED
         ))
         
     except Exception as e:

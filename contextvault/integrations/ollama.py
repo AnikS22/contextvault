@@ -33,17 +33,19 @@ class OllamaIntegration(BaseIntegration):
         request_data: Dict[str, Any],
         model_id: str,
         session: Optional[SessionModel] = None,
+        use_graph_rag: bool = False,
     ) -> Dict[str, Any]:
         """
         Inject context into Ollama request.
-        
+
         Supports both /api/generate and /api/chat endpoints.
-        
+
         Args:
             request_data: Original Ollama request data
             model_id: Model identifier
             session: Optional session for tracking
-            
+            use_graph_rag: Whether to use Graph RAG for context retrieval
+
         Returns:
             Modified request data with context injection
         """
@@ -53,13 +55,26 @@ class OllamaIntegration(BaseIntegration):
             if not original_prompt:
                 self.logger.debug("No prompt found in request, skipping context injection")
                 return request_data
-            
+
+            # Check if Graph RAG should be used
+            # Priority: explicit parameter > request data > global config
+            request_use_graph_rag = (
+                use_graph_rag or
+                request_data.get('use_graph_rag', False) or
+                request_data.get('graph_rag', False) or
+                request_data.get('options', {}).get('use_graph_rag', False) or
+                settings.enable_graph_rag  # Global config setting
+            )
+
             # Get relevant context with session management
             from ..database import get_db_context
             from ..services.context_retrieval import ContextRetrievalService
-            
+
             with get_db_context() as db:
-                session_retrieval_service = ContextRetrievalService(db_session=db)
+                session_retrieval_service = ContextRetrievalService(
+                    db_session=db,
+                    use_graph_rag=request_use_graph_rag
+                )
                 context_result = session_retrieval_service.get_context_for_prompt(
                     model_id=model_id,
                     user_prompt=original_prompt,
@@ -90,13 +105,25 @@ class OllamaIntegration(BaseIntegration):
             if session:
                 for entry_data in context_entries:
                     session.add_context_entry(entry_data)
-                
+
                 session.original_prompt = original_prompt
                 session.final_prompt = self._extract_prompt(modified_request)
                 session.total_context_length = context_result.get("total_length", 0)
-            
-            self.logger.info(f"Context injected successfully for model {model_id}: {len(context_entries)} entries, {context_result.get('total_length', 0)} chars")
-            
+
+            # Log context injection with Graph RAG indicator
+            graph_rag_info = context_result.get("metadata", {}).get("graph_rag", {})
+            if graph_rag_info.get("graph_rag_used"):
+                self.logger.info(
+                    f"Context injected successfully for model {model_id} using Graph RAG: "
+                    f"{len(context_entries)} entries, {context_result.get('total_length', 0)} chars, "
+                    f"method={graph_rag_info.get('search_method', 'unknown')}"
+                )
+            else:
+                self.logger.info(
+                    f"Context injected successfully for model {model_id}: "
+                    f"{len(context_entries)} entries, {context_result.get('total_length', 0)} chars"
+                )
+
             return modified_request
             
         except Exception as e:
@@ -300,34 +327,38 @@ class OllamaIntegration(BaseIntegration):
         model_id: str,
         prompt: str,
         inject_context: bool = True,
+        use_graph_rag: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
         Generate response using Ollama with optional context injection.
-        
+
         Args:
             model_id: Model to use for generation
             prompt: User prompt
             inject_context: Whether to inject context
+            use_graph_rag: Whether to use Graph RAG for context retrieval
             **kwargs: Additional parameters for Ollama
-            
+
         Returns:
             Dictionary with response and metadata
         """
         try:
             import httpx
-            
+
             # Prepare request
             request_data = {
                 "model": model_id,
                 "prompt": prompt,
                 **kwargs
             }
-            
+
             # Inject context if requested
             if inject_context:
                 session = self.create_session(model_id, source="direct_generate")
-                request_data = await self.inject_context(request_data, model_id, session)
+                request_data = await self.inject_context(
+                    request_data, model_id, session, use_graph_rag=use_graph_rag
+                )
             
             # Make request to Ollama
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -366,34 +397,38 @@ class OllamaIntegration(BaseIntegration):
         model_id: str,
         messages: List[Dict[str, str]],
         inject_context: bool = True,
+        use_graph_rag: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
         Chat with Ollama model with optional context injection.
-        
+
         Args:
             model_id: Model to use for chat
             messages: List of chat messages
             inject_context: Whether to inject context
+            use_graph_rag: Whether to use Graph RAG for context retrieval
             **kwargs: Additional parameters for Ollama
-            
+
         Returns:
             Dictionary with response and metadata
         """
         try:
             import httpx
-            
+
             # Prepare request
             request_data = {
                 "model": model_id,
                 "messages": messages,
                 **kwargs
             }
-            
+
             # Inject context if requested
             if inject_context:
                 session = self.create_session(model_id, source="direct_chat")
-                request_data = await self.inject_context(request_data, model_id, session)
+                request_data = await self.inject_context(
+                    request_data, model_id, session, use_graph_rag=use_graph_rag
+                )
             
             # Make request to Ollama
             async with httpx.AsyncClient(timeout=60.0) as client:

@@ -14,8 +14,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from contextvault.cli.commands import (
-    system, context, permissions, templates, 
-    test, demo, diagnose, config, setup, mcp, learning
+    system, context, permissions, templates,
+    test, demo, diagnose, config, setup, mcp, learning,
+    settings, feed, recall, graph_rag
 )
 
 @click.group()
@@ -42,6 +43,31 @@ cli.add_command(diagnose.diagnose_group)
 cli.add_command(config.config_group)
 cli.add_command(mcp.mcp_group)
 cli.add_command(learning.learning_group)
+cli.add_command(graph_rag.graph_rag_group)
+
+# Add new consumer-friendly commands
+cli.add_command(settings.settings_group)
+cli.add_command(feed.feed_documents)
+cli.add_command(feed.feed_status, name="feed-status")
+cli.add_command(recall.recall_memory)
+cli.add_command(recall.show_recent, name="recent")
+cli.add_command(recall.recall_stats, name="memory-stats")
+
+# Add top-level shortcuts for common commands
+@cli.command(name='start')
+def start_shortcut():
+    """Start the ContextVault proxy server."""
+    system.start.callback()
+
+@cli.command(name='stop')
+def stop_shortcut():
+    """Stop the ContextVault proxy server."""
+    system.stop.callback()
+
+@cli.command(name='status')
+def status_shortcut():
+    """Show system status."""
+    system.status.callback()
 
 if __name__ == "__main__":
     cli()

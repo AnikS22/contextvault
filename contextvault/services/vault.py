@@ -21,11 +21,6 @@ class VaultService:
         """Initialize the vault service."""
         self.db_session = db_session
     
-    def _get_session(self) -> Session:
-        """Get database session."""
-        if self.db_session:
-            return self.db_session
-        return next(get_db_context())
     
     def save_context(
         self,
@@ -124,6 +119,36 @@ class VaultService:
             logger.error(f"Failed to save context entry: {str(e)}", exc_info=True)
             raise RuntimeError(f"Failed to save context entry: {str(e)}")
     
+    def get_context_by_id(self, entry_id: str) -> Optional[ContextEntry]:
+        """
+        Get a specific context entry by ID.
+
+        Args:
+            entry_id: ID of the entry to retrieve
+
+        Returns:
+            ContextEntry or None if not found
+        """
+        try:
+            if self.db_session:
+                # Use provided session
+                entry = self.db_session.query(ContextEntry).filter(ContextEntry.id == entry_id).first()
+                return entry
+            else:
+                # Create new session context
+                with get_db_context() as db:
+                    entry = db.query(ContextEntry).filter(ContextEntry.id == entry_id).first()
+                    if entry:
+                        # Access attributes to load them before session closes
+                        _ = entry.content
+                        _ = entry.context_type
+                        _ = entry.tags
+                        _ = entry.entry_metadata
+                    return entry
+        except Exception as e:
+            logger.error(f"Failed to get context entry {entry_id}: {str(e)}", exc_info=True)
+            raise RuntimeError(f"Failed to get context entry: {str(e)}")
+
     def get_context(
         self,
         filters: Optional[Dict[str, Any]] = None,
@@ -134,91 +159,140 @@ class VaultService:
     ) -> Tuple[List[ContextEntry], int]:
         """
         Retrieve context entries with filtering.
-        
+
         Args:
             filters: Dictionary of filters to apply
             limit: Maximum number of entries to return
             offset: Number of entries to skip
             order_by: Field to order by
             order_desc: Whether to order in descending order
-            
+
         Returns:
             Tuple of (entries, total_count)
         """
         filters = filters or {}
-        
+
         try:
-            db = self._get_session()
-            query = db.query(ContextEntry)
-            
-            # Apply filters
-            conditions = []
-            
-            # Context type filter
-            if "context_types" in filters and filters["context_types"]:
-                conditions.append(ContextEntry.context_type.in_(filters["context_types"]))
-            
-            # Tags filter
-            if "tags" in filters and filters["tags"]:
-                tag_conditions = []
-                for tag in filters["tags"]:
-                    tag_conditions.append(ContextEntry.tags.contains([tag]))
-                conditions.append(or_(*tag_conditions))
-            
-            # Source filter
-            if "source" in filters and filters["source"]:
-                conditions.append(ContextEntry.source.ilike(f"%{filters['source']}%"))
-            
-            # Date range filter
-            if "since" in filters and filters["since"]:
-                conditions.append(ContextEntry.created_at >= filters["since"])
-            
-            if "until" in filters and filters["until"]:
-                conditions.append(ContextEntry.created_at <= filters["until"])
-            
-            # User filter
-            if "user_id" in filters and filters["user_id"]:
-                conditions.append(ContextEntry.user_id == filters["user_id"])
-            
-            # Session filter
-            if "session_id" in filters and filters["session_id"]:
-                conditions.append(ContextEntry.session_id == filters["session_id"])
-            
-            # Text search
-            if "search" in filters and filters["search"]:
-                search_term = filters["search"]
-                search_conditions = [
-                    ContextEntry.content.ilike(f"%{search_term}%"),
-                    ContextEntry.source.ilike(f"%{search_term}%"),
-                ]
-                conditions.append(or_(*search_conditions))
-            
-            # Apply all conditions
-            if conditions:
-                query = query.filter(and_(*conditions))
-            
-            # Get total count before pagination
-            total = query.count()
-            
-            # Apply ordering
-            if hasattr(ContextEntry, order_by):
-                order_column = getattr(ContextEntry, order_by)
-                if order_desc:
-                    query = query.order_by(desc(order_column))
-                else:
-                    query = query.order_by(order_column)
-            
-            # Apply pagination
-            query = query.offset(offset).limit(limit)
-            
-            # Execute query
-            entries = query.all()
-            
-            return entries, total
-            
+            if self.db_session:
+                # Use provided session
+                db = self.db_session
+                query = db.query(ContextEntry)
+
+                # Apply filters
+                query = self._apply_filters(query, filters)
+
+                # Get total count before pagination
+                total = query.count()
+
+                # Apply ordering and pagination
+                query = self._apply_ordering_and_pagination(query, order_by, order_desc, offset, limit)
+
+                # Execute query
+                entries = query.all()
+
+                return entries, total
+            else:
+                # Create new session context
+                with get_db_context() as db:
+                    query = db.query(ContextEntry)
+
+                    # Apply filters
+                    query = self._apply_filters(query, filters)
+
+                    # Get total count before pagination
+                    total = query.count()
+
+                    # Apply ordering and pagination
+                    query = self._apply_ordering_and_pagination(query, order_by, order_desc, offset, limit)
+
+                    # Execute query
+                    entries = query.all()
+
+                    # Load attributes to avoid DetachedInstanceError
+                    for entry in entries:
+                        _ = entry.id
+                        _ = entry.content
+                        _ = entry.context_type
+                        _ = entry.source
+                        _ = entry.tags
+                        _ = entry.entry_metadata
+                        _ = entry.user_id
+                        _ = entry.session_id
+                        _ = entry.access_count
+                        _ = entry.last_accessed_at
+                        _ = entry.relevance_score
+                        _ = entry.created_at
+                        _ = entry.updated_at
+
+                    return entries, total
+
         except Exception as e:
-            logger.error("Failed to retrieve context", error=str(e), exc_info=True)
+            logger.error(f"Failed to retrieve context: {str(e)}", exc_info=True)
             raise RuntimeError(f"Failed to retrieve context: {str(e)}")
+
+    def _apply_filters(self, query, filters: Dict[str, Any]):
+        """Apply filters to a query."""
+        conditions = []
+
+        # Context type filter
+        if "context_types" in filters and filters["context_types"]:
+            conditions.append(ContextEntry.context_type.in_(filters["context_types"]))
+
+        # Tags filter
+        if "tags" in filters and filters["tags"]:
+            tag_conditions = []
+            for tag in filters["tags"]:
+                tag_conditions.append(ContextEntry.tags.contains([tag]))
+            conditions.append(or_(*tag_conditions))
+
+        # Source filter
+        if "source" in filters and filters["source"]:
+            conditions.append(ContextEntry.source.ilike(f"%{filters['source']}%"))
+
+        # Date range filter
+        if "since" in filters and filters["since"]:
+            conditions.append(ContextEntry.created_at >= filters["since"])
+
+        if "until" in filters and filters["until"]:
+            conditions.append(ContextEntry.created_at <= filters["until"])
+
+        # User filter
+        if "user_id" in filters and filters["user_id"]:
+            conditions.append(ContextEntry.user_id == filters["user_id"])
+
+        # Session filter
+        if "session_id" in filters and filters["session_id"]:
+            conditions.append(ContextEntry.session_id == filters["session_id"])
+
+        # Text search
+        if "search" in filters and filters["search"]:
+            search_term = filters["search"]
+            search_conditions = [
+                ContextEntry.content.ilike(f"%{search_term}%"),
+                ContextEntry.source.ilike(f"%{search_term}%"),
+            ]
+            conditions.append(or_(*search_conditions))
+
+        # Apply all conditions
+        if conditions:
+            query = query.filter(and_(*conditions))
+
+        return query
+
+    def _apply_ordering_and_pagination(self, query, order_by: str, order_desc: bool, offset: int, limit: int):
+        """Apply ordering and pagination to a query."""
+        # Apply ordering
+        if hasattr(ContextEntry, order_by):
+            order_column = getattr(ContextEntry, order_by)
+            if order_desc:
+                query = query.order_by(desc(order_column))
+            else:
+                query = query.order_by(order_column)
+
+        # Apply pagination
+        query = query.offset(offset).limit(limit)
+
+        return query
     
     def update_context(
         self,
@@ -283,7 +357,7 @@ class VaultService:
                 return entry
                 
         except Exception as e:
-            logger.error("Failed to update context entry", entry_id=entry_id, error=str(e), exc_info=True)
+            logger.error(f"Failed to update context entry {entry_id}: {str(e)}", exc_info=True)
             raise RuntimeError(f"Failed to update context entry: {str(e)}")
     
     def delete_context(self, entry_id: str) -> bool:
@@ -314,7 +388,7 @@ class VaultService:
                 return True
                 
         except Exception as e:
-            logger.error("Failed to delete context entry", entry_id=entry_id, error=str(e), exc_info=True)
+            logger.error(f"Failed to delete context entry {entry_id}: {str(e)}", exc_info=True)
             raise RuntimeError(f"Failed to delete context entry: {str(e)}")
     
     def search_context(
@@ -410,7 +484,7 @@ class VaultService:
                             "id": entry.id,
                             "content_preview": entry.content[:100] + "..." if len(entry.content) > 100 else entry.content,
                             "access_count": entry.access_count,
-                            "context_type": entry.context_type.value,
+                            "context_type": entry.context_type if isinstance(entry.context_type, str) else entry.context_type.value,
                         }
                         for entry in most_accessed
                     ],
@@ -423,7 +497,7 @@ class VaultService:
                 }
                 
         except Exception as e:
-            logger.error("Failed to get context stats", error=str(e), exc_info=True)
+            logger.error(f"Failed to get context stats: {str(e)}", exc_info=True)
             raise RuntimeError(f"Failed to get context stats: {str(e)}")
     
     def cleanup_old_entries(self, retention_days: Optional[int] = None) -> int:
@@ -470,7 +544,7 @@ class VaultService:
                 return count
                 
         except Exception as e:
-            logger.error("Failed to cleanup old entries", error=str(e), exc_info=True)
+            logger.error(f"Failed to cleanup old entries: {str(e)}", exc_info=True)
             raise RuntimeError(f"Failed to cleanup old entries: {str(e)}")
     
     def export_context(
@@ -510,7 +584,7 @@ class VaultService:
             return export_data
             
         except Exception as e:
-            logger.error("Failed to export context", error=str(e), exc_info=True)
+            logger.error(f"Failed to export context: {str(e)}", exc_info=True)
             raise RuntimeError(f"Failed to export context: {str(e)}")
 
 

@@ -37,7 +37,7 @@ try:
     FALLBACK_AVAILABLE = True
 except ImportError:
     FALLBACK_AVAILABLE = False
-    logger.warning("scikit-learn not available for fallback semantic search")
+    # logger will be defined later
 
 from ..models.context import ContextEntry
 from ..config import settings

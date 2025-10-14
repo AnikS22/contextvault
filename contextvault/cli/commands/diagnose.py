@@ -179,16 +179,17 @@ def ollama():
 def database():
     """Check database status and integrity."""
     console.print("🗄️ [bold blue]Database Diagnostics[/bold blue]")
-    
+
     try:
+        from sqlalchemy import inspect
         from contextvault.database import get_db_context, engine
         from contextvault.models.context import ContextEntry
         from contextvault.models.permissions import Permission
-        
+
         # Test connection
         with get_db_context() as db:
             # Check tables
-            inspector = engine.inspect()
+            inspector = inspect(engine)
             tables = inspector.get_table_names()
             
             console.print(f"📋 [blue]Database tables:[/blue]")

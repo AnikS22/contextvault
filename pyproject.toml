@@ -67,9 +67,10 @@ Repository = "https://github.com/contextvault/contextvault"
 
 [project.scripts]
 contextvault = "contextvault.cli.main:cli"
+contextible = "contextvault.cli.main:cli"
 
 [tool.setuptools]
-packages = ["contextvault", "contextvault.api", "contextvault.models", "contextvault.services", "contextvault.integrations", "contextvault.schemas", "contextvault.cli", "contextvault.cli.commands"]
+packages = ["contextvault", "contextvault.api", "contextvault.models", "contextvault.services", "contextvault.integrations", "contextvault.integrations.mcp", "contextvault.schemas", "contextvault.cli", "contextvault.cli.commands", "contextvault.routing", "contextvault.thinking", "contextvault.dashboard"]
 
 [tool.black]
 line-length = 88

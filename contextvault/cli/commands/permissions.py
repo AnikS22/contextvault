@@ -21,10 +21,10 @@ def list():
     console.print("🔐 [bold blue]Permission List[/bold blue]")
     
     try:
-        response = requests.get('http://localhost:11435/api/permissions/list')
-        
+        response = requests.get('http://localhost:11435/api/permissions/')
+
         if response.status_code == 200:
-            data = response.json().get('data', [])
+            data = response.json()  # API returns list directly, not wrapped in 'data'
             
             if data:
                 table = Table(title="Model Permissions")
@@ -34,9 +34,12 @@ def list():
                 table.add_column("Active", style="yellow", width=8)
                 
                 for perm in data:
-                    scopes_str = ', '.join(perm.get('allowed_scopes', []))
+                    # Parse scope (comma-separated string) into list
+                    scope = perm.get('scope', '')
+                    scopes_list = [s.strip() for s in scope.split(',') if s.strip()] if scope else []
+                    scopes_str = ', '.join(scopes_list) if scopes_list else 'None'
                     active_str = "✅ Yes" if perm.get('is_active', False) else "❌ No"
-                    
+
                     table.add_row(
                         perm['model_id'],
                         perm.get('model_name', 'Unknown'),
@@ -121,22 +124,27 @@ def revoke(model_id: str, scopes: str):
 def check(model_id: str):
     """Check permissions for a model."""
     console.print(f"🔍 [bold blue]Checking Permissions for {model_id}[/bold blue]")
-    
+
     try:
-        response = requests.get(f'http://localhost:11435/api/permissions/check/{model_id}')
-        
+        response = requests.get(f'http://localhost:11435/api/permissions/models/{model_id}/summary')
+
         if response.status_code == 200:
-            data = response.json().get('data', {})
-            
+            data = response.json()
+
             if data:
                 allowed_scopes = data.get('allowed_scopes', [])
-                is_active = data.get('is_active', False)
-                
+                has_unrestricted = data.get('has_unrestricted_access', False)
+                is_denied = data.get('is_denied_access', False)
+
                 panel_content = f"""[bold]Model ID:[/bold] {model_id}
 [bold]Model Name:[/bold] {data.get('model_name', 'Unknown')}
-[bold]Active:[/bold] {'✅ Yes' if is_active else '❌ No'}
-[bold]Allowed Scopes:[/bold] {', '.join(allowed_scopes) if allowed_scopes else 'None'}"""
-                
+[bold]Total Permissions:[/bold] {data.get('total_permissions', 0)}
+[bold]Active Permissions:[/bold] {data.get('active_permissions', 0)}
+[bold]Allowed Scopes:[/bold] {', '.join(allowed_scopes) if allowed_scopes else 'None'}
+[bold]Unrestricted Access:[/bold] {'✅ Yes' if has_unrestricted else '❌ No'}
+[bold]Access Denied:[/bold] {'❌ Yes' if is_denied else '✅ No'}
+[bold]Usage Count:[/bold] {data.get('usage_count', 0)}"""
+
                 panel = Panel(
                     panel_content,
                     title="Permission Details",
@@ -145,6 +153,8 @@ def check(model_id: str):
                 console.print(panel)
             else:
                 console.print(f"ℹ️ [yellow]No permissions found for {model_id}[/yellow]")
+        elif response.status_code == 404:
+            console.print(f"ℹ️ [yellow]No permissions found for {model_id}[/yellow]")
         else:
             console.print(f"❌ [red]Failed to check permissions: {response.status_code}[/red]")
             
@@ -183,24 +193,34 @@ def toggle(model_id: str, active: bool):
 def summary():
     """Show permission summary."""
     console.print("📊 [bold blue]Permission Summary[/bold blue]")
-    
+
     try:
-        response = requests.get('http://localhost:11435/api/permissions/summary')
-        
+        response = requests.get('http://localhost:11435/api/permissions/models/')
+
         if response.status_code == 200:
-            data = response.json().get('data', {})
-            
-            total_models = data.get('total_models', 0)
-            active_models = data.get('active_models', 0)
-            inactive_models = data.get('inactive_models', 0)
-            
+            summaries = response.json()
+
+            total_models = len(summaries)
+            active_models = len([s for s in summaries if s.get('active_permissions', 0) > 0])
+            inactive_models = total_models - active_models
+
+            # Collect scope statistics
+            scope_counts = {}
+            for summary in summaries:
+                for scope in summary.get('allowed_scopes', []):
+                    scope_counts[scope] = scope_counts.get(scope, 0) + 1
+
+            scope_list = "\n".join([f"  • {scope}: {count}" for scope, count in sorted(scope_counts.items(), key=lambda x: x[1], reverse=True)])
+            if not scope_list:
+                scope_list = "  No scopes configured"
+
             panel_content = f"""[bold]Total Models:[/bold] {total_models}
 [bold]Active Models:[/bold] {active_models}
 [bold]Inactive Models:[/bold] {inactive_models}
 
 [bold]Most Common Scopes:[/bold]
-{chr(10).join([f"  • {scope}: {count}" for scope, count in data.get('scope_counts', {}).items()])}"""
-            
+{scope_list}"""
+
             panel = Panel(
                 panel_content,
                 title="Permission Summary",

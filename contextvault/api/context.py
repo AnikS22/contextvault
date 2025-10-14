@@ -101,9 +101,9 @@ async def get_context_entries(
         
         # Convert to response model
         if include_metadata:
-            entry_responses.append(ContextEntryResponse.from_orm(entry))
+            entry_responses.append(ContextEntryResponse.model_validate(entry))
         else:
-            entry_responses.append(ContextEntryResponse.from_orm(entry))
+            entry_responses.append(ContextEntryResponse.model_validate(entry))
     
     # Commit access tracking
     db.commit()
@@ -133,7 +133,7 @@ async def create_context_entry(
             context_type=entry_data.context_type,
             source=entry_data.source,
             tags=entry_data.tags,
-            metadata=entry_data.metadata,
+            entry_metadata=entry_data.metadata,
             user_id=entry_data.user_id,
             session_id=entry_data.session_id,
         )
@@ -141,9 +141,9 @@ async def create_context_entry(
         db.add(entry)
         db.commit()
         db.refresh(entry)
-        
-        return ContextEntryResponse.from_orm(entry)
-        
+
+        return ContextEntryResponse.model_validate(entry)
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Failed to create context entry: {str(e)}")
@@ -164,8 +164,8 @@ async def get_context_entry(
     # Record access
     entry.record_access()
     db.commit()
-    
-    return ContextEntryResponse.from_orm(entry)
+
+    return ContextEntryResponse.model_validate(entry)
 
 
 @router.put("/{entry_id}", response_model=ContextEntryResponse)
@@ -182,19 +182,19 @@ async def update_context_entry(
     
     try:
         # Update fields that were provided
-        update_dict = update_data.dict(exclude_unset=True)
-        
+        update_dict = update_data.model_dump(exclude_unset=True)
+
         for field, value in update_dict.items():
             setattr(entry, field, value)
         
         # Update timestamp
         entry.updated_at = datetime.utcnow()
-        
+
         db.commit()
         db.refresh(entry)
-        
-        return ContextEntryResponse.from_orm(entry)
-        
+
+        return ContextEntryResponse.model_validate(entry)
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Failed to update context entry: {str(e)}")
@@ -289,9 +289,9 @@ async def search_context_entries(
         entry.record_access()
     
     db.commit()
-    
+
     # Convert to response format
-    entry_responses = [ContextEntryResponse.from_orm(entry) for entry in entries]
+    entry_responses = [ContextEntryResponse.model_validate(entry) for entry in entries]
     
     query_time_ms = int((time.time() - start_time) * 1000)
     
@@ -326,14 +326,14 @@ async def get_context_stats(db: Session = Depends(get_db_session)):
         desc(ContextEntry.created_at)
     ).limit(10).all()
     
-    most_accessed_brief = [ContextEntryBrief.from_orm(entry) for entry in most_accessed]
-    
+    most_accessed_brief = [ContextEntryBrief.model_validate(entry) for entry in most_accessed]
+
     # Recent entries
     recent = db.query(ContextEntry).order_by(
         desc(ContextEntry.created_at)
     ).limit(10).all()
-    
-    recent_brief = [ContextEntryBrief.from_orm(entry) for entry in recent]
+
+    recent_brief = [ContextEntryBrief.model_validate(entry) for entry in recent]
     
     # Date range
     oldest_entry = db.query(func.min(ContextEntry.created_at)).scalar()

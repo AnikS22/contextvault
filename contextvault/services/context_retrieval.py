@@ -16,13 +16,43 @@ from .semantic_search import get_semantic_search_service
 
 logger = logging.getLogger(__name__)
 
+# Optional Graph RAG import
+try:
+    from ..storage.graph_db import GraphRAGDatabase
+    GRAPH_RAG_AVAILABLE = True
+except ImportError:
+    GRAPH_RAG_AVAILABLE = False
+    GraphRAGDatabase = None
+    logger.warning("Graph RAG not available - install neo4j and spacy to enable")
+
 
 class ContextRetrievalService:
     """Service for intelligent context retrieval and ranking."""
     
-    def __init__(self, db_session: Optional[Session] = None):
-        """Initialize the context retrieval service."""
+    def __init__(self, db_session: Optional[Session] = None, use_graph_rag: bool = False):
+        """Initialize the context retrieval service.
+
+        Args:
+            db_session: Optional database session
+            use_graph_rag: Whether to use Graph RAG for retrieval
+        """
         self.db_session = db_session
+        self.use_graph_rag = use_graph_rag and GRAPH_RAG_AVAILABLE
+
+        # Initialize Graph RAG if available and requested
+        self.graph_rag_db = None
+        if self.use_graph_rag and GRAPH_RAG_AVAILABLE:
+            try:
+                self.graph_rag_db = GraphRAGDatabase()
+                if not self.graph_rag_db.is_available():
+                    logger.warning("Graph RAG initialized but Neo4j is not available")
+                    self.use_graph_rag = False
+                else:
+                    logger.info("Graph RAG initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Graph RAG: {e}")
+                self.use_graph_rag = False
+
         # Create session-specific services to avoid detached instance errors
         if db_session:
             from .permissions import PermissionService
@@ -90,37 +120,68 @@ class ContextRetrievalService:
             if max_age_days:
                 filters["since"] = datetime.utcnow() - timedelta(days=max_age_days)
             
-            # Perform initial retrieval using semantic search if available
+            # Perform initial retrieval
+            entries = []
+            semantic_scores = {}
+            graph_rag_metadata = {}
+
             if query_context and query_context.strip():
-                # Try semantic search first
-                semantic_service = get_semantic_search_service()
-                if semantic_service.is_available():
-                    logger.info(f"Using semantic search for query: {query_context[:50]}...")
-                    
-                    # Get semantic search results with hybrid scoring
-                    semantic_results = semantic_service.search_with_hybrid_scoring(
+                # Try Graph RAG first if enabled
+                if self.use_graph_rag and self.graph_rag_db:
+                    logger.info(f"Using Graph RAG for query: {query_context[:50]}...")
+
+                    graph_results, graph_rag_metadata = self._get_graph_rag_context(
                         query=query_context.strip(),
-                        db_session=self.db_session,
-                        max_results=limit * 2
+                        limit=limit * 2
                     )
-                    
-                    # Extract entries and metadata
-                    entries = [result[0] for result in semantic_results]
-                    total = len(entries)
-                    
-                    # Add semantic scores to metadata
-                    semantic_scores = {result[0].id: result[2] for result in semantic_results}
-                    
-                else:
-                    logger.info("Semantic search not available, falling back to keyword search")
-                    # Fallback to keyword search
-                    entries, total = self.vault_service.search_context(
-                        query=query_context.strip(),
-                        limit=limit * 2,
-                        context_types=context_types,
-                        tags=tags,
-                    )
-                    semantic_scores = {}
+
+                    if graph_results and graph_rag_metadata.get("graph_rag_used"):
+                        # Convert Graph RAG results to ContextEntry objects
+                        entries = self._convert_graph_results_to_entries(graph_results)
+                        total = len(entries)
+
+                        # Extract relevance scores from Graph RAG results
+                        semantic_scores = {
+                            entries[i].id: graph_results[i].get('relevance_score', 0.0)
+                            for i in range(len(entries))
+                            if i < len(graph_results)
+                        }
+
+                        logger.info(f"Graph RAG retrieved {total} results")
+                    else:
+                        # Graph RAG failed, fallback to traditional search
+                        logger.warning("Graph RAG query failed, falling back to semantic search")
+                        self.use_graph_rag = False
+
+                # If Graph RAG not used, try semantic search
+                if not entries:
+                    semantic_service = get_semantic_search_service()
+                    if semantic_service.is_available():
+                        logger.info(f"Using semantic search for query: {query_context[:50]}...")
+
+                        # Get semantic search results with hybrid scoring
+                        semantic_results = semantic_service.search_with_hybrid_scoring(
+                            query=query_context.strip(),
+                            db_session=self.db_session,
+                            max_results=limit * 2
+                        )
+
+                        # Extract entries and metadata
+                        entries = [result[0] for result in semantic_results]
+                        total = len(entries)
+
+                        # Add semantic scores to metadata
+                        semantic_scores = {result[0].id: result[2] for result in semantic_results}
+
+                    else:
+                        logger.info("Semantic search not available, falling back to keyword search")
+                        # Fallback to keyword search
+                        entries, total = self.vault_service.search_context(
+                            query=query_context.strip(),
+                            limit=limit * 2,
+                            context_types=context_types,
+                            tags=tags,
+                        )
             else:
                 # Get recent entries
                 entries, total = self.vault_service.get_context(
@@ -163,6 +224,10 @@ class ContextRetrievalService:
                 "filters_applied": filters,
                 "permission_summary": self.permission_service.get_permission_summary(model_id),
             }
+
+            # Add Graph RAG metadata if used
+            if graph_rag_metadata:
+                metadata["graph_rag"] = graph_rag_metadata
             
             logger.info(f"Context retrieval completed for model {model_id}: {len(final_entries)} entries in {metadata['processing_time_ms']}ms")
             
@@ -526,13 +591,117 @@ class ContextRetrievalService:
                 "total_length": 0,
             }
     
+    def _get_graph_rag_context(
+        self,
+        query: str,
+        limit: int = 10
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """
+        Get context from Graph RAG.
+
+        Args:
+            query: Search query
+            limit: Maximum number of results
+
+        Returns:
+            Tuple of (graph_results, metadata)
+        """
+        if not self.use_graph_rag or not self.graph_rag_db:
+            return [], {"graph_rag_used": False, "reason": "not_available"}
+
+        try:
+            logger.info(f"Querying Graph RAG for: {query[:50]}...")
+
+            results = self.graph_rag_db.search(
+                query=query,
+                limit=limit,
+                use_graph=True,
+                min_relevance=0.3
+            )
+
+            logger.info(f"Graph RAG returned {len(results)} results")
+
+            return results, {
+                "graph_rag_used": True,
+                "total_results": len(results),
+                "search_method": "hybrid_graph_vector"
+            }
+
+        except Exception as e:
+            logger.error(f"Graph RAG search failed: {e}", exc_info=True)
+            return [], {"graph_rag_used": False, "error": str(e)}
+
+    def _convert_graph_results_to_entries(
+        self,
+        graph_results: List[Dict[str, Any]]
+    ) -> List[ContextEntry]:
+        """
+        Convert Graph RAG search results to ContextEntry objects.
+
+        Args:
+            graph_results: List of Graph RAG result dictionaries
+
+        Returns:
+            List of ContextEntry objects
+        """
+        entries = []
+
+        for result in graph_results:
+            try:
+                # Extract fields from Graph RAG result
+                content = result.get('content', '')
+                document_id = result.get('document_id', '')
+                metadata = result.get('metadata', {})
+                relevance_score = result.get('relevance_score', 0.0)
+
+                # Try to find existing entry in database by document_id or content
+                existing_entry = None
+                if document_id:
+                    # Try to find by source (we'll use document_id as source)
+                    with get_db_context() as db:
+                        existing_entry = db.query(ContextEntry).filter(
+                            ContextEntry.source == f"graph_rag:{document_id}"
+                        ).first()
+
+                if existing_entry:
+                    # Use existing entry
+                    existing_entry.relevance_score = relevance_score
+                    entries.append(existing_entry)
+                else:
+                    # Create a temporary ContextEntry object
+                    # Note: These won't be persisted to the DB automatically
+                    entry = ContextEntry(
+                        content=content,
+                        context_type=ContextType.NOTE,  # Default to NOTE
+                        source=f"graph_rag:{document_id}",
+                        tags=metadata.get('tags', []) if isinstance(metadata.get('tags'), list) else [],
+                        relevance_score=relevance_score
+                    )
+
+                    # Add graph-specific metadata
+                    if result.get('matched_entity'):
+                        entry.metadata_ = {
+                            'matched_entity': result['matched_entity'],
+                            'entity_type': result.get('entity_type'),
+                            'search_type': result.get('search_type'),
+                            'related_entities': result.get('related_entities', [])
+                        }
+
+                    entries.append(entry)
+
+            except Exception as e:
+                logger.warning(f"Failed to convert Graph RAG result to ContextEntry: {e}")
+                continue
+
+        return entries
+
     def _format_context_entry(self, entry: ContextEntry) -> str:
         """
         Format a single context entry for inclusion in prompts.
-        
+
         Args:
             entry: The context entry to format
-            
+
         Returns:
             Formatted string representation
         """
@@ -547,12 +716,12 @@ class ContextRetrievalService:
             prefix = "Event:"
         else:
             prefix = "Context:"
-        
+
         # Add tags if present
         tag_suffix = ""
         if entry.tags:
             tag_suffix = f" [Tags: {', '.join(entry.tags)}]"
-        
+
         return f"{prefix} {entry.content}{tag_suffix}"
 
 

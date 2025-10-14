@@ -20,6 +20,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from contextvault.config import settings, validate_environment
 from contextvault.database import check_database_connection, init_database
 from contextvault.integrations import ollama_integration
+from contextvault.api import context as context_router
+from contextvault.api import permissions as permissions_router
+from contextvault.api import mcp as mcp_router
 
 
 def setup_logging():
@@ -192,7 +195,7 @@ async def chat_with_context(request: Request):
     try:
         body = await request.body()
         headers = dict(request.headers)
-        
+
         # Use the integration's proxy method
         result = await ollama_integration.proxy_request(
             path="/api/chat",
@@ -201,16 +204,37 @@ async def chat_with_context(request: Request):
             body=body,
             inject_context=True,
         )
-        
+
         return Response(
             content=result["content"],
             status_code=result["status_code"],
             headers=dict(result["headers"]),
         )
-        
+
     except Exception as e:
         logger.error(f"Chat request failed: {e}")
         raise HTTPException(status_code=500, detail=f"Chat request failed: {str(e)}")
+
+
+# Add context management routes BEFORE the catch-all route
+# This ensures they get matched before the catch-all wildcard
+app.include_router(
+    context_router.router,
+    prefix="/api/context",
+    tags=["Context Management"]
+)
+
+app.include_router(
+    permissions_router.router,
+    prefix="/api/permissions",
+    tags=["Permission Management"]
+)
+
+app.include_router(
+    mcp_router.router,
+    prefix="/api",
+    tags=["MCP Integration"]
+)
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
@@ -245,9 +269,9 @@ async def context_status():
     """Get context injection status and statistics."""
     try:
         from contextvault.services import vault_service
-        
+
         stats = vault_service.get_context_stats()
-        
+
         return {
             "context_injection": "enabled",
             "vault_stats": stats,
@@ -257,7 +281,7 @@ async def context_status():
                 "upstream": ollama_integration.endpoint,
             }
         }
-        
+
     except Exception as e:
         logger.error(f"Failed to get context status: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get context status: {str(e)}")

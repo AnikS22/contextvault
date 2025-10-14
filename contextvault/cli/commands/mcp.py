@@ -24,7 +24,14 @@ def list():
         response = requests.get('http://localhost:11435/api/mcp/connections')
         
         if response.status_code == 200:
-            data = response.json().get('data', [])
+            json_data = response.json()
+            # Handle both list response and dict with 'data' key
+            if type(json_data).__name__ == 'list':
+                data = json_data
+            elif hasattr(json_data, 'get'):
+                data = json_data.get('data', [])
+            else:
+                data = []
             
             if data:
                 table = Table(title="MCP Connections")
@@ -248,11 +255,19 @@ def status():
     try:
         # Get connections
         connections_response = requests.get('http://localhost:11435/api/mcp/connections')
-        connections_data = connections_response.json().get('data', []) if connections_response.status_code == 200 else []
+        if connections_response.status_code == 200:
+            json_data = connections_response.json()
+            connections_data = json_data if type(json_data).__name__ == 'list' else json_data.get('data', [])
+        else:
+            connections_data = []
         
         # Get providers
         providers_response = requests.get('http://localhost:11435/api/mcp/providers')
-        providers_data = providers_response.json().get('data', []) if providers_response.status_code == 200 else []
+        if providers_response.status_code == 200:
+            json_data = providers_response.json()
+            providers_data = json_data if type(json_data).__name__ == 'list' else json_data.get('data', [])
+        else:
+            providers_data = []
         
         # Calculate statistics
         total_connections = len(connections_data)

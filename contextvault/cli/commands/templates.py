@@ -62,21 +62,47 @@ def list():
 def set(template_name: str):
     """Set the active context injection template."""
     console.print(f"⚙️ [bold blue]Setting Active Template: {template_name}[/bold blue]")
-    
+
     try:
         from contextvault.services.templates import template_manager
-        
+
+        # Normalize the template name
+        # Convert "Direct Instruction" or "direct_instruction" or "direct-instruction" to "direct_instruction"
+        normalized_name = template_name.lower().replace(' ', '_').replace('-', '_')
+
+        # If that didn't work, try to match against known templates
+        all_templates = template_manager.get_all_templates_names()
+        if normalized_name not in all_templates:
+            # Try fuzzy matching
+            for known_template in all_templates:
+                if normalized_name in known_template or known_template in normalized_name:
+                    normalized_name = known_template
+                    break
+                # Also check display name
+                display_name = known_template.replace('_', ' ').lower()
+                if normalized_name == display_name:
+                    normalized_name = known_template
+                    break
+
         # Try to set the template
-        new_template = template_manager.set_active_template(template_name)
-        
+        new_template = template_manager.set_active_template(normalized_name)
+
         console.print(f"✅ [green]Active template set to:[/green] {new_template.name.replace('_', ' ').title()}")
         console.print(f"   Type: {new_template.template_type.value}")
         console.print(f"   Strength: {new_template.strength}/10")
         console.print(f"   Description: {new_template.description}")
-        
+
     except ValueError as e:
         console.print(f"❌ [red]Invalid template: {e}[/red]")
-        console.print("   Use 'templates list' to see available templates")
+        console.print("\n📝 [yellow]Available templates:[/yellow]")
+        try:
+            from contextvault.services.templates import template_manager
+            all_templates = template_manager.get_all_templates_names()
+            for name in all_templates:
+                console.print(f"   • {name}")
+        except:
+            pass
+        console.print("\n   Use 'contextible templates list' to see details")
     except Exception as e:
         console.print(f"❌ [red]Error setting template: {e}[/red]")
 

@@ -5,6 +5,7 @@ import time
 import requests
 import signal
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -25,52 +26,40 @@ def system_group():
 def start():
     """Start the ContextVault proxy server."""
     console.print("🚀 [bold blue]Starting ContextVault...[/bold blue]")
-    
+
     # Check if already running
     try:
         response = requests.get("http://localhost:11435/health", timeout=2)
         if response.status_code == 200:
             console.print("✅ [green]ContextVault is already running[/green]")
+            console.print("   Proxy: http://localhost:11435")
+            console.print("   Use [bold]contextible stop[/bold] to stop it")
             return
     except:
         pass
-    
-    # Start the proxy
+
+    # Start the proxy using uvicorn directly
     script_path = Path(__file__).parent.parent.parent.parent / "scripts" / "ollama_proxy.py"
-    env = {**os.environ, "PYTHONPATH": str(script_path.parent.parent)}
-    
+
     try:
-        process = subprocess.Popen(
-            ["python", str(script_path)],
-            cwd=script_path.parent,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+        console.print("🔗 [cyan]Launching ContextVault Ollama Proxy...[/cyan]")
+        console.print()
+        console.print("📡 [bold]Proxy will be available at:[/bold]")
+        console.print("   • Main: http://localhost:11435")
+        console.print("   • Health: http://localhost:11435/health")
+        console.print("   • Docs: http://localhost:11435/docs")
+        console.print()
+        console.print("💡 [dim]Tip: Use Ctrl+C to stop the server[/dim]")
+        console.print()
+
+        # Run the proxy (this will block)
+        subprocess.run(
+            [sys.executable, str(script_path)],
+            cwd=script_path.parent
         )
-        
-        # Wait for startup
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Starting ContextVault...", total=None)
-            
-            for i in range(15):
-                try:
-                    response = requests.get("http://localhost:11435/health", timeout=2)
-                    if response.status_code == 200:
-                        progress.update(task, description="✅ ContextVault started successfully")
-                        console.print("\n🎉 [bold green]ContextVault is now running![/bold green]")
-                        console.print("   Proxy: http://localhost:11435")
-                        console.print("   Dashboard: http://localhost:8080")
-                        return
-                except:
-                    time.sleep(1)
-            
-            console.print("\n❌ [red]Failed to start ContextVault[/red]")
-            console.print("   Check the logs for more information")
-            
+
+    except KeyboardInterrupt:
+        console.print("\n🛑 [yellow]ContextVault stopped by user[/yellow]")
     except Exception as e:
         console.print(f"❌ [red]Error starting ContextVault: {e}[/red]")
 
@@ -98,68 +87,92 @@ def stop():
 @system_group.command()
 def status():
     """Show ContextVault system status."""
-    console.print("📊 [bold blue]ContextVault Status[/bold blue]")
-    console.print("=" * 40)
-    
-    # Check proxy status
-    try:
-        response = requests.get("http://localhost:11435/health", timeout=5)
-        if response.status_code == 200:
-            health_data = response.json()
-            
-            # Create status table
-            table = Table(title="System Status")
-            table.add_column("Component", style="cyan")
-            table.add_column("Status", style="green")
-            table.add_column("Details", style="white")
-            
-            # Proxy status
-            proxy_healthy = health_data.get("proxy", {}).get("healthy", False)
-            table.add_row(
-                "ContextVault Proxy",
-                "✅ Running" if proxy_healthy else "❌ Failed",
-                f"http://localhost:11435"
-            )
-            
-            # Ollama status
-            ollama_status = health_data.get("ollama", {}).get("status", "unknown")
-            table.add_row(
-                "Ollama Integration",
-                "✅ Connected" if ollama_status == "healthy" else "❌ Failed",
-                f"http://localhost:11434"
-            )
-            
-            # Database status
-            db_healthy = health_data.get("database", {}).get("healthy", False)
-            table.add_row(
-                "Database",
-                "✅ Connected" if db_healthy else "❌ Failed",
-                "SQLite"
-            )
-            
-            # Context injection
-            ctx_enabled = health_data.get("context_injection") == "enabled"
-            table.add_row(
-                "Context Injection",
-                "✅ Enabled" if ctx_enabled else "❌ Disabled",
-                "Active"
-            )
-            
-            console.print(table)
-            
-            if all([proxy_healthy, ollama_status == "healthy", db_healthy, ctx_enabled]):
-                console.print("\n🎉 [bold green]All systems operational![/bold green]")
+
+    with Progress(
+        SpinnerColumn(spinner_name="point"),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("🔍 Checking system status...", total=None)
+
+        # Check proxy status
+        try:
+            response = requests.get("http://localhost:11435/health", timeout=5)
+
+            if response.status_code == 200:
+                health_data = response.json()
+
+                progress.update(task, description="✅ Status check complete!")
+                time.sleep(0.2)
+                console.print()
+
+                # Create status table
+                from rich.table import Table
+                from rich import box
+                table = Table(title="✨ System Status", box=box.ROUNDED, border_style="cyan")
+                table.add_column("Component", style="bold cyan", width=25)
+                table.add_column("Status", style="bold", width=15)
+                table.add_column("Details", style="white", width=20)
+
+                # Proxy status
+                proxy_healthy = health_data.get("proxy", {}).get("healthy", False)
+                table.add_row(
+                    "🚀 ContextVault Proxy",
+                    "[green]✅ Running[/green]" if proxy_healthy else "[red]❌ Failed[/red]",
+                    "localhost:11435"
+                )
+
+                # Ollama status
+                ollama_status = health_data.get("ollama", {}).get("status", "unknown")
+                table.add_row(
+                    "🤖 Ollama Integration",
+                    "[green]✅ Connected[/green]" if ollama_status == "healthy" else "[red]❌ Failed[/red]",
+                    "localhost:11434"
+                )
+
+                # Database status
+                db_healthy = health_data.get("database", {}).get("healthy", False)
+                table.add_row(
+                    "💾 Database",
+                    "[green]✅ Connected[/green]" if db_healthy else "[red]❌ Failed[/red]",
+                    "SQLite"
+                )
+
+                # Context injection
+                ctx_enabled = health_data.get("context_injection") == "enabled"
+                table.add_row(
+                    "🧠 Context Injection",
+                    "[green]✅ Enabled[/green]" if ctx_enabled else "[red]❌ Disabled[/red]",
+                    "Active"
+                )
+
+                console.print(table)
+
+                if all([proxy_healthy, ollama_status == "healthy", db_healthy, ctx_enabled]):
+                    console.print()
+                    from rich.panel import Panel
+                    console.print(Panel(
+                        "[bold green]All systems operational![/bold green] 🎉\nYour AI has superpowers! 🚀",
+                        border_style="green",
+                        box=box.ROUNDED
+                    ))
+                else:
+                    console.print("\n⚠️  [yellow]Some components have issues[/yellow]")
+
             else:
-                console.print("\n⚠️ [yellow]Some components have issues[/yellow]")
-                
-        else:
-            console.print("❌ [red]ContextVault proxy not responding[/red]")
-            
-    except requests.exceptions.ConnectionError:
-        console.print("❌ [red]ContextVault proxy not running[/red]")
-        console.print("   Run 'python -m contextvault.cli start' to start it")
-    except Exception as e:
-        console.print(f"❌ [red]Error checking status: {e}[/red]")
+                progress.update(task, description="❌ Status check failed")
+                time.sleep(0.2)
+                console.print("\n❌ [red]ContextVault proxy not responding[/red]")
+
+        except requests.exceptions.ConnectionError:
+            progress.update(task, description="❌ Connection failed")
+            time.sleep(0.2)
+            console.print("\n❌ [red]ContextVault proxy not running[/red]")
+            console.print("   Run [bold]contextible start[/bold] to start it")
+        except Exception as e:
+            progress.update(task, description="❌ Error occurred")
+            time.sleep(0.2)
+            console.print(f"\n❌ [red]Error checking status: {e}[/red]")
 
 @system_group.command()
 def health():

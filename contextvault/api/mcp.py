@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
 from ..database import get_db_session
@@ -22,6 +22,8 @@ class MCPConnectionCreate(BaseModel):
 
 class MCPConnectionResponse(BaseModel):
     """Schema for MCP connection responses."""
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     name: str
     provider_type: str
@@ -36,12 +38,11 @@ class MCPConnectionResponse(BaseModel):
     created_at: str
     updated_at: str
 
-    class Config:
-        from_attributes = True
-
 
 class MCPProviderCreate(BaseModel):
     """Schema for creating MCP providers."""
+    model_config = ConfigDict(protected_namespaces=())
+
     connection_id: str = Field(..., description="MCP connection ID")
     model_id: str = Field(..., min_length=1, max_length=255, description="AI model ID")
     enabled: bool = Field(default=True, description="Whether provider is enabled")
@@ -56,6 +57,8 @@ class MCPProviderCreate(BaseModel):
 
 class MCPProviderResponse(BaseModel):
     """Schema for MCP provider responses."""
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+
     id: str
     connection_id: str
     model_id: str
@@ -70,12 +73,11 @@ class MCPProviderResponse(BaseModel):
     created_at: str
     updated_at: str
 
-    class Config:
-        from_attributes = True
-
 
 class MCPContextRequest(BaseModel):
     """Schema for MCP context requests."""
+    model_config = ConfigDict(protected_namespaces=())
+
     model_id: str = Field(..., description="AI model ID")
     context_type: str = Field(default="recent_activity", description="Type of context")
     limit: int = Field(default=10, ge=1, le=100, description="Maximum results")
@@ -83,6 +85,8 @@ class MCPContextRequest(BaseModel):
 
 class MCPSearchRequest(BaseModel):
     """Schema for MCP search requests."""
+    model_config = ConfigDict(protected_namespaces=())
+
     model_id: str = Field(..., description="AI model ID")
     query: str = Field(..., min_length=1, description="Search query")
     limit: int = Field(default=20, ge=1, le=100, description="Maximum results")

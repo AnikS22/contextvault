@@ -57,7 +57,7 @@ class TestContextInjectionEffectiveness:
             ]
             
             for ctx_data in test_contexts:
-                vault_service.add_context(
+                vault_service.save_context(
                     content=ctx_data["content"],
                     context_type=ctx_data["context_type"],
                     source=ctx_data["source"],
@@ -210,12 +210,13 @@ class TestContextInjectionEffectiveness:
         with get_db_context() as db:
             vault_service = VaultService(db_session=db)
             
-            entry_id = vault_service.add_context(
+            entry = vault_service.save_context(
                 content="Test content",
                 context_type=ContextType.NOTE,
                 source="test",
                 tags=["test"]
             )
+            entry_id = entry.id
             
             entry = vault_service.get_context_by_id(entry_id)
             
@@ -309,12 +310,13 @@ class TestIntegrationScenarios:
         with get_db_context() as db:
             vault_service = VaultService(db_session=db)
             
-            entry_id = vault_service.add_context(
+            entry = vault_service.save_context(
                 content="I love Python programming and machine learning",
                 context_type=ContextType.PREFERENCE,
                 source="user_profile",
                 tags=["programming", "python", "ml"]
             )
+            entry_id = entry.id
         
         # 2. Retrieve context
         with get_db_context() as db:
@@ -380,7 +382,7 @@ class TestIntegrationScenarios:
         with get_db_context() as db:
             # Add context that's semantically related but doesn't share exact keywords
             vault_service = VaultService(db_session=db)
-            vault_service.add_context(
+            vault_service.save_context(
                 content="I enjoy building web applications and APIs",
                 context_type=ContextType.PREFERENCE,
                 source="test",

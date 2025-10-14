@@ -33,8 +33,19 @@ class Settings(BaseSettings):
     
     # Context Management
     max_context_entries: int = Field(default=100, env="MAX_CONTEXT_ENTRIES")
-    max_context_length: int = Field(default=10000, env="MAX_CONTEXT_LENGTH")
+    max_context_length: int = Field(default=10000, env="MAX_CONTEXT_LENGTH")  # Deprecated, use max_context_tokens
+    max_context_tokens: int = Field(default=8192, env="MAX_CONTEXT_TOKENS")  # New token-based limit
     default_context_retention_days: int = Field(default=90, env="DEFAULT_CONTEXT_RETENTION_DAYS")
+
+    # Graph RAG Configuration
+    enable_graph_rag: bool = Field(default=False, env="ENABLE_GRAPH_RAG")
+    neo4j_uri: str = Field(default="bolt://localhost:7687", env="NEO4J_URI")
+    neo4j_user: str = Field(default="neo4j", env="NEO4J_USER")
+    neo4j_password: str = Field(default="password", env="NEO4J_PASSWORD")
+
+    # Token window management
+    use_token_counting: bool = Field(default=True, env="USE_TOKEN_COUNTING")
+    default_tokenizer_type: str = Field(default="llama", env="DEFAULT_TOKENIZER_TYPE")
     
     # Permission Defaults
     default_model_permissions: str = Field(default="basic", env="DEFAULT_MODEL_PERMISSIONS")
@@ -43,7 +54,13 @@ class Settings(BaseSettings):
     # Performance
     enable_caching: bool = Field(default=True, env="ENABLE_CACHING")
     cache_ttl_seconds: int = Field(default=300, env="CACHE_TTL_SECONDS")
-    
+
+    # Extended Thinking Configuration
+    enable_extended_thinking: bool = Field(default=True, env="ENABLE_EXTENDED_THINKING")
+    max_thinking_duration_minutes: int = Field(default=120, env="MAX_THINKING_DURATION_MINUTES")
+    synthesis_interval_seconds: int = Field(default=300, env="SYNTHESIS_INTERVAL_SECONDS")
+    max_concurrent_thinking_sessions: int = Field(default=5, env="MAX_CONCURRENT_THINKING_SESSIONS")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -86,11 +103,115 @@ def get_default_permission_scopes() -> List[str]:
     return ["basic", "preferences", "notes", "files", "events", "all"]
 
 
+def get_model_profiles() -> Dict[str, Dict[str, Any]]:
+    """
+    Get predefined model profiles with token window configurations.
+
+    Returns:
+        Dictionary of model profiles with token limits and configurations
+    """
+    return {
+        # Llama models
+        "llama3.1": {
+            "max_context_window": 128000,
+            "max_output": 4096,
+            "tokenizer": "llama",
+            "buffer": 512,
+        },
+        "llama3": {
+            "max_context_window": 8192,
+            "max_output": 2048,
+            "tokenizer": "llama",
+            "buffer": 256,
+        },
+        "llama2": {
+            "max_context_window": 4096,
+            "max_output": 2048,
+            "tokenizer": "llama",
+            "buffer": 256,
+        },
+        # Mistral models
+        "mistral": {
+            "max_context_window": 32000,
+            "max_output": 8192,
+            "tokenizer": "mistral",
+            "buffer": 512,
+        },
+        "mixtral": {
+            "max_context_window": 32000,
+            "max_output": 8192,
+            "tokenizer": "mistral",
+            "buffer": 512,
+        },
+        # Gemma models
+        "gemma2": {
+            "max_context_window": 8192,
+            "max_output": 2048,
+            "tokenizer": "gemma",
+            "buffer": 256,
+        },
+        "gemma": {
+            "max_context_window": 8192,
+            "max_output": 2048,
+            "tokenizer": "gemma",
+            "buffer": 256,
+        },
+        # Phi models
+        "phi3": {
+            "max_context_window": 128000,
+            "max_output": 4096,
+            "tokenizer": "phi",
+            "buffer": 512,
+        },
+        "phi": {
+            "max_context_window": 2048,
+            "max_output": 1024,
+            "tokenizer": "phi",
+            "buffer": 128,
+        },
+        # Default fallback
+        "default": {
+            "max_context_window": 8192,
+            "max_output": 2048,
+            "tokenizer": "llama",
+            "buffer": 256,
+        },
+    }
+
+
+def get_model_profile(model_id: str) -> Dict[str, Any]:
+    """
+    Get token configuration for a specific model.
+
+    Args:
+        model_id: Model identifier (e.g., 'llama3.1', 'mistral:latest')
+
+    Returns:
+        Dictionary with model configuration
+    """
+    profiles = get_model_profiles()
+
+    # Extract base model name (remove version/tags)
+    model_base = model_id.split(':')[0].lower()
+
+    # Try exact match first
+    if model_base in profiles:
+        return profiles[model_base]
+
+    # Try partial match
+    for profile_name, profile_config in profiles.items():
+        if profile_name in model_base or model_base in profile_name:
+            return profile_config
+
+    # Return default
+    return profiles["default"]
+
+
 def validate_environment() -> Dict[str, Any]:
     """Validate the current environment and return a status report."""
     issues = []
     warnings = []
-    
+
     # Check database accessibility
     db_url = get_database_url()
     if db_url.startswith("sqlite:"):
@@ -101,14 +222,14 @@ def validate_environment() -> Dict[str, Any]:
                 os.makedirs(db_dir, exist_ok=True)
             except PermissionError:
                 issues.append(f"Cannot create database directory: {db_dir}")
-    
+
     # Check security settings
     if settings.secret_key == "change-me-in-production":
         warnings.append("Using default secret key - change in production")
-    
+
     if not settings.encryption_key:
         warnings.append("No encryption key set - sensitive data will be stored in plaintext")
-    
+
     # Check Ollama connectivity (non-blocking)
     try:
         import socket
@@ -120,7 +241,7 @@ def validate_environment() -> Dict[str, Any]:
             warnings.append(f"Ollama not accessible at {settings.ollama_host}:{settings.ollama_port}")
     except Exception:
         warnings.append("Could not check Ollama connectivity")
-    
+
     return {
         "status": "healthy" if not issues else "error",
         "issues": issues,

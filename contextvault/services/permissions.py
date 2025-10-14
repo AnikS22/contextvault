@@ -21,12 +21,6 @@ class PermissionService:
         """Initialize the permission service."""
         self.db_session = db_session
     
-    def _get_session(self) -> Session:
-        """Get database session."""
-        if self.db_session:
-            return self.db_session
-        return next(get_db_context())
-    
     def check_permission(
         self,
         model_id: str,
@@ -35,25 +29,35 @@ class PermissionService:
     ) -> Tuple[bool, str, List[str]]:
         """
         Check if a model has permission to access a context entry.
-        
+
         Args:
             model_id: The AI model identifier
             context_entry: The context entry to check access for
             requested_action: The action being requested (read, write, delete)
-            
+
         Returns:
             Tuple of (allowed, reason, applicable_permission_ids)
         """
         try:
-            with get_db_context() as db:
+            # Use provided session or create a new one
+            if self.db_session:
+                db = self.db_session
+                should_commit = False  # Caller manages commits
+            else:
+                # Will use context manager below
+                db = None
+                should_commit = True  # We manage commits
+
+            def _check_logic(db_session):
+                """Inner function to perform the permission check logic."""
                 # Get active permissions for this model
-                permissions = db.query(Permission).filter(
+                permissions = db_session.query(Permission).filter(
                     and_(
                         Permission.model_id == model_id,
                         Permission.is_active == True
                     )
                 ).all()
-                
+
                 if not permissions:
                     # No permissions found - check if unknown models are allowed
                     if settings.allow_unknown_models:
@@ -62,57 +66,73 @@ class PermissionService:
                     else:
                         logger.warning("No permissions found for model", model_id=model_id)
                         return False, f"No permissions configured for model '{model_id}'", []
-                
+
                 # Check for explicit deny_all first
                 deny_permissions = [p for p in permissions if p.deny_all]
                 if deny_permissions:
                     perm_ids = [p.id for p in deny_permissions]
                     for perm in deny_permissions:
                         perm.record_usage()
-                    db.commit()
-                    
+                    if should_commit:
+                        db_session.commit()
+                    else:
+                        db_session.flush()
+
                     logger.info("Access denied by deny_all rule", model_id=model_id, permission_ids=perm_ids)
                     return False, "Access denied by explicit deny rule", perm_ids
-                
+
                 # Check for allow_all permissions
                 allow_all_permissions = [p for p in permissions if p.allow_all]
                 if allow_all_permissions:
                     perm_ids = [p.id for p in allow_all_permissions]
                     for perm in allow_all_permissions:
                         perm.record_usage()
-                    db.commit()
-                    
+                    if should_commit:
+                        db_session.commit()
+                    else:
+                        db_session.flush()
+
                     logger.info("Access granted by allow_all rule", model_id=model_id, permission_ids=perm_ids)
                     return True, "Access granted by unrestricted permission", perm_ids
-                
+
                 # Check specific permissions
                 applicable_permissions = []
-                
+
                 for permission in permissions:
                     # Check if this permission applies to the context entry
                     if self._permission_applies_to_entry(permission, context_entry):
                         applicable_permissions.append(permission)
-                
+
                 if not applicable_permissions:
                     logger.info("No applicable permissions found", model_id=model_id, entry_id=context_entry.id)
                     return False, "No applicable permissions found for this content", []
-                
+
                 # Evaluate the most permissive applicable permission
                 for permission in applicable_permissions:
                     allowed, reason = self._evaluate_permission_rules(permission, context_entry, requested_action)
-                    
+
                     if allowed:
                         permission.record_usage()
-                        db.commit()
-                        
+                        if should_commit:
+                            db_session.commit()
+                        else:
+                            db_session.flush()
+
                         logger.info(f"Access granted for model {model_id} to entry {context_entry.id}: {reason}")
                         return True, reason, [permission.id]
-                
+
                 # No permission granted access
                 perm_ids = [p.id for p in applicable_permissions]
                 logger.info("Access denied by permission rules", model_id=model_id, entry_id=context_entry.id)
                 return False, "Access denied by permission rules", perm_ids
-                
+
+            # Execute with appropriate session management
+            if db:
+                return _check_logic(db)
+            else:
+                with get_db_context() as db:
+                    return _check_logic(db)
+
         except Exception as e:
             logger.error(f"Error checking permission for model {model_id}: {str(e)}", exc_info=True)
             return False, f"Permission check failed: {str(e)}", []
@@ -254,62 +274,145 @@ class PermissionService:
     ) -> Permission:
         """
         Create a new permission rule for a model.
-        
+
         Args:
             model_id: The AI model identifier
             scopes: List of allowed scopes
             rules: Additional permission rules
             description: Human-readable description
             model_name: Human-readable model name
-            
+
         Returns:
             The created Permission object
-            
+
         Raises:
             ValueError: If parameters are invalid
             RuntimeError: If database operation fails
         """
         if not model_id or not model_id.strip():
             raise ValueError("Model ID cannot be empty")
-        
+
         if not scopes:
             raise ValueError("At least one scope must be specified")
-        
+
         try:
-            db = self._get_session()
-            # Check if permission already exists
-            existing = db.query(Permission).filter(Permission.model_id == model_id).first()
-            
-            if existing:
-                # Update existing permission
-                existing.scope = ",".join(scopes)
-                existing.rules = rules or {}
-                existing.description = description
-                existing.model_name = model_name
-                existing.updated_at = datetime.utcnow()
-                
-                db.commit()
-                db.refresh(existing)
-                
-                logger.info(f"Permission rule updated: model_id={model_id}, scopes={scopes}")
-                return existing
+            # Use provided session or create a new one
+            if self.db_session:
+                # Use existing session (caller manages commits)
+                db = self.db_session
+
+                # Check if permission already exists
+                existing = db.query(Permission).filter(Permission.model_id == model_id).first()
+
+                if existing:
+                    # Update existing permission
+                    existing.scope = ",".join(scopes)
+                    existing.rules = rules or {}
+                    existing.description = description
+                    existing.model_name = model_name
+                    existing.updated_at = datetime.utcnow()
+
+                    db.flush()
+                    db.refresh(existing)
+
+                    # Load attributes before potential session close
+                    result_id = existing.id
+                    result_scope = existing.scope
+
+                    logger.info(f"Permission rule updated: model_id={model_id}, scopes={scopes}")
+                    return existing
+                else:
+                    # Create new permission
+                    permission = Permission(
+                        model_id=model_id.strip(),
+                        model_name=model_name,
+                        scope=",".join(scopes),
+                        rules=rules or {},
+                        description=description,
+                    )
+
+                    db.add(permission)
+                    db.flush()
+                    db.refresh(permission)
+
+                    # Load attributes before potential session close
+                    result_id = permission.id
+                    result_scope = permission.scope
+
+                    logger.info(f"Permission rule created: model_id={model_id}, scopes={scopes}, permission_id={permission.id}")
+                    return permission
             else:
-                # Create new permission
-                permission = Permission(
-                    model_id=model_id.strip(),
-                    model_name=model_name,
-                    scope=",".join(scopes),
-                    rules=rules or {},
-                    description=description,
-                )
-                
-                db.add(permission)
-                db.commit()
-                db.refresh(permission)
-                
-                logger.info(f"Permission rule created: model_id={model_id}, scopes={scopes}, permission_id={permission.id}")
-                return permission
-                    
+                # Create new session context (we manage commits)
+                with get_db_context() as db:
+                    # Check if permission already exists
+                    existing = db.query(Permission).filter(Permission.model_id == model_id).first()
+
+                    if existing:
+                        # Update existing permission
+                        existing.scope = ",".join(scopes)
+                        existing.rules = rules or {}
+                        existing.description = description
+                        existing.model_name = model_name
+                        existing.updated_at = datetime.utcnow()
+
+                        db.flush()
+
+                        # Load all attributes before expunging to avoid lazy loading issues
+                        _ = existing.id
+                        _ = existing.scope
+                        _ = existing.rules
+                        _ = existing.model_name
+                        _ = existing.description
+                        _ = existing.is_active
+                        _ = existing.allow_all
+                        _ = existing.deny_all
+                        _ = existing.created_at
+                        _ = existing.updated_at
+                        _ = existing.created_by
+                        _ = existing.last_used_at
+                        _ = existing.usage_count
+
+                        # Expunge object from session before commit to prevent expiration
+                        db.expunge(existing)
+                        # Commit happens automatically in context manager
+
+                        logger.info(f"Permission rule updated: model_id={model_id}, scopes={scopes}")
+                        return existing
+                    else:
+                        # Create new permission
+                        permission = Permission(
+                            model_id=model_id.strip(),
+                            model_name=model_name,
+                            scope=",".join(scopes),
+                            rules=rules or {},
+                            description=description,
+                        )
+
+                        db.add(permission)
+                        db.flush()
+
+                        # Load all attributes before expunging to avoid lazy loading issues
+                        _ = permission.id
+                        _ = permission.scope
+                        _ = permission.rules
+                        _ = permission.model_name
+                        _ = permission.description
+                        _ = permission.is_active
+                        _ = permission.allow_all
+                        _ = permission.deny_all
+                        _ = permission.created_at
+                        _ = permission.updated_at
+                        _ = permission.created_by
+                        _ = permission.last_used_at
+                        _ = permission.usage_count
+
+                        # Expunge object from session before commit to prevent expiration
+                        db.expunge(permission)
+                        # Commit happens automatically in context manager
+
+                        logger.info(f"Permission rule created: model_id={model_id}, scopes={scopes}, permission_id={permission.id}")
+                        return permission
+
         except Exception as e:
             logger.error(f"Failed to create permission rule: model_id={model_id}, error={str(e)}", exc_info=True)
             raise RuntimeError(f"Failed to create permission rule: {str(e)}")
