@@ -33,10 +33,7 @@ def interactive_chat(model: str, use_graph_rag: bool):
         border_style="cyan"
     ))
     
-    # Run async chat loop
-    asyncio.run(chat_loop_with_commands(model, use_graph_rag))
-
-    # Run with natural language commands
+    # Run async chat loop with natural language commands
     asyncio.run(chat_loop_with_commands(model, use_graph_rag))
 
 
