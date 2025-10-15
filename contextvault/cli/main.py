@@ -20,7 +20,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from contextvault.cli.commands import (
     system, context, permissions, templates,
-    test, demo, diagnose, config, setup, mcp, learning
+    test, demo, diagnose, config, setup, mcp, learning,
+    settings, feed, recall, graph_rag, chat
 )
 
 console = Console()
@@ -114,10 +115,15 @@ cli.add_command(diagnose.diagnose_group)
 cli.add_command(config.config_group)
 cli.add_command(mcp.mcp_group)
 cli.add_command(learning.learning_group)
+cli.add_command(settings.settings_group)
+cli.add_command(graph_rag.graph_rag_group)
 
 # Add convenience shortcuts
 cli.add_command(system.start, name="start")  # contextible start -> contextible system start
 cli.add_command(system.stop, name="stop")    # contextible stop -> contextible system stop
+cli.add_command(chat.interactive_chat, name="chat")  # ai-memory chat
+cli.add_command(feed.feed_documents, name="feed")  # ai-memory feed
+cli.add_command(recall.recall_memory, name="recall")  # ai-memory recall
 
 if __name__ == "__main__":
     cli()

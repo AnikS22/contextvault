@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from contextvault.cli.commands import (
     system, context, permissions, templates,
     test, demo, diagnose, config, setup, mcp, learning,
-    settings, feed, recall, graph_rag
+    settings, feed, recall, graph_rag, chat
 )
 
 @click.group()
@@ -68,6 +68,9 @@ def stop_shortcut():
 def status_shortcut():
     """Show system status."""
     system.status.callback()
+
+# Add interactive chat command
+cli.add_command(chat.interactive_chat)
 
 if __name__ == "__main__":
     cli()

@@ -25,19 +25,29 @@ except ImportError:
     GraphRAGDatabase = None
     logger.warning("Graph RAG not available - install neo4j and spacy to enable")
 
+# Optional Mem0 import
+try:
+    from .mem0_service import get_mem0_service
+    MEM0_AVAILABLE = True
+except ImportError:
+    MEM0_AVAILABLE = False
+    logger.warning("Mem0 service not available")
+
 
 class ContextRetrievalService:
     """Service for intelligent context retrieval and ranking."""
     
-    def __init__(self, db_session: Optional[Session] = None, use_graph_rag: bool = False):
+    def __init__(self, db_session: Optional[Session] = None, use_graph_rag: bool = False, use_mem0: bool = False):
         """Initialize the context retrieval service.
 
         Args:
             db_session: Optional database session
             use_graph_rag: Whether to use Graph RAG for retrieval
+            use_mem0: Whether to use Mem0 for memory management (Cognitive Workspace)
         """
         self.db_session = db_session
         self.use_graph_rag = use_graph_rag and GRAPH_RAG_AVAILABLE
+        self.use_mem0 = use_mem0 and MEM0_AVAILABLE
 
         # Initialize Graph RAG if available and requested
         self.graph_rag_db = None
@@ -45,13 +55,27 @@ class ContextRetrievalService:
             try:
                 self.graph_rag_db = GraphRAGDatabase()
                 if not self.graph_rag_db.is_available():
-                    logger.warning("Graph RAG initialized but Neo4j is not available")
+                    logger.warning("Graph RAG initialized but Neo4j is not available - falling back to standard search")
                     self.use_graph_rag = False
                 else:
                     logger.info("Graph RAG initialized successfully")
             except Exception as e:
-                logger.error(f"Failed to initialize Graph RAG: {e}")
+                logger.error(f"Failed to initialize Graph RAG: {e} - falling back to standard search")
                 self.use_graph_rag = False
+
+        # Initialize Mem0 if available and requested
+        self.mem0_service = None
+        if self.use_mem0 and MEM0_AVAILABLE:
+            try:
+                self.mem0_service = get_mem0_service()
+                if not self.mem0_service.is_available():
+                    logger.warning("Mem0 initialized but service is not available (requires Qdrant) - falling back to VaultService")
+                    self.use_mem0 = False
+                else:
+                    logger.info("Mem0 Cognitive Workspace initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Mem0: {e} - falling back to VaultService")
+                self.use_mem0 = False
 
         # Create session-specific services to avoid detached instance errors
         if db_session:
@@ -126,8 +150,35 @@ class ContextRetrievalService:
             graph_rag_metadata = {}
 
             if query_context and query_context.strip():
-                # Try Graph RAG first if enabled
-                if self.use_graph_rag and self.graph_rag_db:
+                # Try Mem0 first if enabled (Cognitive Workspace with relationship tracking)
+                if self.use_mem0 and self.mem0_service:
+                    logger.info(f"Using Mem0 Cognitive Workspace for query: {query_context[:50]}...")
+
+                    mem0_results, mem0_metadata = self._get_mem0_context(
+                        query=query_context.strip(),
+                        limit=limit * 2
+                    )
+
+                    if mem0_results and mem0_metadata.get("mem0_used"):
+                        # Convert Mem0 results to ContextEntry objects
+                        entries = self._convert_mem0_results_to_entries(mem0_results)
+                        total = len(entries)
+
+                        # Extract relevance scores from Mem0 results
+                        semantic_scores = {
+                            entries[i].id: mem0_results[i].get('score', 0.0)
+                            for i in range(len(entries))
+                            if i < len(mem0_results)
+                        }
+
+                        logger.info(f"Mem0 retrieved {total} results")
+                    else:
+                        # Mem0 failed, fallback to Graph RAG or traditional search
+                        logger.warning("Mem0 query failed, falling back to Graph RAG or semantic search")
+                        self.use_mem0 = False
+
+                # If Mem0 not used, try Graph RAG if enabled
+                if not entries and self.use_graph_rag and self.graph_rag_db:
                     logger.info(f"Using Graph RAG for query: {query_context[:50]}...")
 
                     graph_results, graph_rag_metadata = self._get_graph_rag_context(
@@ -153,7 +204,7 @@ class ContextRetrievalService:
                         logger.warning("Graph RAG query failed, falling back to semantic search")
                         self.use_graph_rag = False
 
-                # If Graph RAG not used, try semantic search
+                # If neither Mem0 nor Graph RAG used, try semantic search
                 if not entries:
                     semantic_service = get_semantic_search_service()
                     if semantic_service.is_available():
@@ -691,6 +742,109 @@ class ContextRetrievalService:
 
             except Exception as e:
                 logger.warning(f"Failed to convert Graph RAG result to ContextEntry: {e}")
+                continue
+
+        return entries
+
+    def _get_mem0_context(
+        self,
+        query: str,
+        limit: int = 10
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """
+        Get context from Mem0 Cognitive Workspace.
+
+        Args:
+            query: Search query
+            limit: Maximum number of results
+
+        Returns:
+            Tuple of (mem0_results, metadata)
+        """
+        if not self.use_mem0 or not self.mem0_service:
+            return [], {"mem0_used": False, "reason": "not_available"}
+
+        try:
+            logger.info(f"Querying Mem0 for: {query[:50]}...")
+
+            results = self.mem0_service.search_memories(
+                query=query,
+                limit=limit,
+                include_relationships=True
+            )
+
+            logger.info(f"Mem0 returned {len(results)} results")
+
+            return results, {
+                "mem0_used": True,
+                "total_results": len(results),
+                "search_method": "mem0_cognitive_workspace"
+            }
+
+        except Exception as e:
+            logger.error(f"Mem0 search failed: {e}", exc_info=True)
+            return [], {"mem0_used": False, "error": str(e)}
+
+    def _convert_mem0_results_to_entries(
+        self,
+        mem0_results: List[Dict[str, Any]]
+    ) -> List[ContextEntry]:
+        """
+        Convert Mem0 search results to ContextEntry objects.
+
+        Args:
+            mem0_results: List of Mem0 result dictionaries
+
+        Returns:
+            List of ContextEntry objects
+        """
+        entries = []
+
+        for result in mem0_results:
+            try:
+                # Extract fields from Mem0 result
+                content = result.get('content', '')
+                memory_id = result.get('memory_id', '')
+                metadata = result.get('metadata', {})
+                score = result.get('score', 0.0)
+                relationships = result.get('relationships', [])
+
+                # Try to find existing entry in database by memory_id or content
+                existing_entry = None
+                if memory_id:
+                    # Try to find by source (we'll use memory_id as source)
+                    with get_db_context() as db:
+                        existing_entry = db.query(ContextEntry).filter(
+                            ContextEntry.source == f"mem0:{memory_id}"
+                        ).first()
+
+                if existing_entry:
+                    # Use existing entry
+                    existing_entry.relevance_score = score
+                    entries.append(existing_entry)
+                else:
+                    # Create a temporary ContextEntry object
+                    # Note: These won't be persisted to the DB automatically
+                    entry = ContextEntry(
+                        content=content,
+                        context_type=ContextType.NOTE,  # Default to NOTE
+                        source=f"mem0:{memory_id}",
+                        tags=metadata.get('tags', []) if isinstance(metadata.get('tags'), list) else [],
+                        relevance_score=score
+                    )
+
+                    # Add Mem0-specific metadata (including relationships)
+                    if relationships:
+                        entry.metadata_ = {
+                            'mem0_relationships': relationships,
+                            'memory_source': 'mem0_cognitive_workspace',
+                            'memory_id': memory_id
+                        }
+
+                    entries.append(entry)
+
+            except Exception as e:
+                logger.warning(f"Failed to convert Mem0 result to ContextEntry: {e}")
                 continue
 
         return entries

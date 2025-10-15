@@ -21,6 +21,7 @@ ContextVault is a proxy that sits between you and your local AI models (Ollama, 
 
 ### **Prerequisites**
 - Python 3.8+
+- [Docker](https://www.docker.com/get-started) (for Neo4j Graph RAG - recommended)
 - [Ollama](https://ollama.ai) installed and running
 - At least one Ollama model (e.g., `ollama pull mistral:latest`)
 
@@ -34,12 +35,20 @@ cd contextvault
 # Install dependencies
 pip install -r requirements.txt
 
+# Start Neo4j for Graph RAG (Primary Retrieval System)
+docker run -d --name contextvault-neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/password \
+  neo4j:latest
+
 # Initialize ContextVault
 python -m contextvault.cli setup
 
 # Start the proxy
 python -m contextvault.cli start
 ```
+
+> **Note**: ContextVault uses **Graph RAG** as the primary retrieval system by default. Neo4j is required for full functionality. The system will gracefully fall back to semantic search if Neo4j is unavailable.
 
 ### **Test It Works**
 
@@ -51,15 +60,40 @@ python -m contextvault.cli test
 python -m contextvault.cli demo
 ```
 
+### **Add Knowledge to Graph RAG**
+
+ContextVault uses Graph RAG for intelligent context retrieval with entity extraction and relationship mapping:
+
+```bash
+# Add documents with automatic entity extraction
+python -m contextvault.cli graph-rag add \
+  "John Smith works at Acme Corp as a Software Engineer in San Francisco" \
+  --id doc1
+
+python -m contextvault.cli graph-rag add \
+  "Acme Corp raised $50M in Series A funding from Venture Partners" \
+  --id doc2
+
+# Search with entity-aware retrieval
+python -m contextvault.cli graph-rag search "Acme Corp" --show-entities
+
+# Check entity relationships
+python -m contextvault.cli graph-rag entity "John Smith" --type PERSON
+
+# View Graph RAG statistics
+python -m contextvault.cli graph-rag stats
+```
+
 ### **Use ContextVault**
 
 Instead of connecting directly to Ollama:
 ```bash
 # OLD WAY (generic responses)
-curl http://localhost:11434/api/generate -d '{"model":"mistral:latest","prompt":"What pets do I have?"}'
+curl http://localhost:11434/api/generate -d '{"model":"mistral:latest","prompt":"Tell me about Acme Corp"}'
 
-# NEW WAY (personalized responses)
-curl http://localhost:11435/api/generate -d '{"model":"mistral:latest","prompt":"What pets do I have?"}'
+# NEW WAY (personalized responses with Graph RAG)
+curl http://localhost:11435/api/generate -d '{"model":"mistral:latest","prompt":"Tell me about Acme Corp"}'
+# Automatically retrieves and injects knowledge about Acme Corp, John Smith, funding, etc.
 ```
 
 ## 📋 **Command Line Interface**
@@ -73,7 +107,14 @@ python -m contextvault.cli stop           # Stop the proxy
 python -m contextvault.cli status         # Check system status
 python -m contextvault.cli health         # Detailed health check
 
-# Context management
+# Graph RAG (Primary Retrieval System)
+python -m contextvault.cli graph-rag add "Content here" --id doc1
+python -m contextvault.cli graph-rag search "query" --show-entities
+python -m contextvault.cli graph-rag entity "Entity Name" --type PERSON
+python -m contextvault.cli graph-rag stats
+python -m contextvault.cli graph-rag health
+
+# Context management (Legacy/Fallback)
 python -m contextvault.cli context add "I love Python and testing" --type preference --tags programming
 python -m contextvault.cli context list
 python -m contextvault.cli context search "programming languages"

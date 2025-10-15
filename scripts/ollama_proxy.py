@@ -23,6 +23,7 @@ from contextvault.integrations import ollama_integration
 from contextvault.api import context as context_router
 from contextvault.api import permissions as permissions_router
 from contextvault.api import mcp as mcp_router
+from contextvault.cognitive import cognitive_workspace
 
 
 def setup_logging():

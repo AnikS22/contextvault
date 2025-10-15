@@ -37,11 +37,19 @@ class Settings(BaseSettings):
     max_context_tokens: int = Field(default=8192, env="MAX_CONTEXT_TOKENS")  # New token-based limit
     default_context_retention_days: int = Field(default=90, env="DEFAULT_CONTEXT_RETENTION_DAYS")
 
-    # Graph RAG Configuration
-    enable_graph_rag: bool = Field(default=False, env="ENABLE_GRAPH_RAG")
+    # Graph RAG Configuration (Production Default: ENABLED)
+    enable_graph_rag: bool = Field(default=True, env="ENABLE_GRAPH_RAG")
     neo4j_uri: str = Field(default="bolt://localhost:7687", env="NEO4J_URI")
     neo4j_user: str = Field(default="neo4j", env="NEO4J_USER")
     neo4j_password: str = Field(default="password", env="NEO4J_PASSWORD")
+
+    # Cognitive Workspace Configuration (Production Default: ENABLED - no external deps)
+    enable_cognitive_workspace: bool = Field(default=True, env="ENABLE_COGNITIVE_WORKSPACE")
+    
+    # Mem0 Cognitive Workspace Configuration (Production Default: DISABLED - requires Qdrant)
+    enable_mem0: bool = Field(default=False, env="ENABLE_MEM0")
+    qdrant_url: str = Field(default="http://localhost:6333", env="QDRANT_URL")
+    qdrant_api_key: Optional[str] = Field(default=None, env="QDRANT_API_KEY")
 
     # Token window management
     use_token_counting: bool = Field(default=True, env="USE_TOKEN_COUNTING")

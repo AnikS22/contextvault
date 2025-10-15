@@ -49,6 +49,17 @@ pandas>=2.3.0
 # Vector Database
 chromadb>=1.1.0
 
+# Mem0 AI Memory Layer (NEW - Industry Standard)
+mem0ai>=0.1.0
+qdrant-client>=1.7.0
+faiss-cpu>=1.7.4
+
+# Background Jobs & Scheduling (NEW)
+apscheduler>=3.10.0
+
+# NetworkX for Relationship Graphs
+networkx>=3.0
+
 # Dashboard & Web Interface
 jinja2==3.1.2
 python-multipart==0.0.6

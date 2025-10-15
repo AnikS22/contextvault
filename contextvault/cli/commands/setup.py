@@ -81,24 +81,30 @@ def setup():
                 console.print(f"   ⚠️ {package} - {description}")
                 console.print("   Install with: pip install sentence-transformers")
 
-    # Check Graph RAG dependencies
-    console.print("\n🔗 [blue]Checking Graph RAG dependencies...[/blue]")
+    # Check Graph RAG dependencies (REQUIRED for production)
+    console.print("\n🔗 [bold blue]Checking Graph RAG (Primary Retrieval System)...[/bold blue]")
 
     graph_rag_packages = {
-        "neo4j": "Neo4j graph database driver",
-        "spacy": "Entity extraction for Graph RAG",
-        "pandas": "Data processing for Graph RAG"
+        "neo4j": "Neo4j graph database driver (REQUIRED)",
+        "spacy": "Entity extraction for Graph RAG (REQUIRED)",
+        "pandas": "Data processing for Graph RAG (REQUIRED)"
     }
 
     graph_rag_available = True
+    missing_packages = []
+
     for package, description in graph_rag_packages.items():
         try:
             __import__(package)
             console.print(f"   ✅ {package} - {description}")
         except ImportError:
-            console.print(f"   ⚠️ {package} - {description}")
-            console.print(f"   Install with: pip install {package}")
+            console.print(f"   ❌ {package} - {description}")
+            missing_packages.append(package)
             graph_rag_available = False
+
+    if missing_packages:
+        console.print(f"\n   [red]Missing Graph RAG packages. Install with:[/red]")
+        console.print(f"   [yellow]pip install {' '.join(missing_packages)}[/yellow]")
 
     # Check spaCy model if spacy is installed
     try:
@@ -107,21 +113,33 @@ def setup():
             spacy.load("en_core_web_sm")
             console.print("   ✅ spacy model (en_core_web_sm)")
         except:
-            console.print("   ⚠️ spacy model (en_core_web_sm) not found")
-            console.print("   Install with: python -m spacy download en_core_web_sm")
+            console.print("   ❌ spacy model (en_core_web_sm) not found - REQUIRED")
+            console.print("   [yellow]Install with: python -m spacy download en_core_web_sm[/yellow]")
             graph_rag_available = False
     except ImportError:
-        pass
+        console.print("   ⚠️  spacy not available - install first")
 
-    # Check Neo4j availability
-    if graph_rag_available:
-        try:
-            import requests
-            response = requests.get("http://localhost:7474", timeout=2)
-            console.print("   ✅ Neo4j is running (http://localhost:7474)")
-        except:
-            console.print("   ⚠️ Neo4j is not running")
-            console.print("   Start with: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password neo4j")
+    # Check Neo4j availability (CRITICAL)
+    console.print("\n🗄️  [bold blue]Checking Neo4j Database (REQUIRED)...[/bold blue]")
+    neo4j_running = False
+
+    try:
+        import requests
+        response = requests.get("http://localhost:7474", timeout=2)
+        console.print("   ✅ Neo4j is running (http://localhost:7474)")
+        neo4j_running = True
+    except:
+        console.print("   ❌ Neo4j is NOT running - REQUIRED for Graph RAG")
+        console.print("\n   [bold yellow]Start Neo4j with Docker:[/bold yellow]")
+        console.print("   [cyan]docker run -d --name contextvault-neo4j \\[/cyan]")
+        console.print("   [cyan]  -p 7474:7474 -p 7687:7687 \\[/cyan]")
+        console.print("   [cyan]  -e NEO4J_AUTH=neo4j/password \\[/cyan]")
+        console.print("   [cyan]  neo4j:latest[/cyan]")
+        console.print("\n   [dim]Access Neo4j Browser at: http://localhost:7474[/dim]")
+
+    if not graph_rag_available or not neo4j_running:
+        console.print("\n   [bold red]⚠️  Graph RAG is NOT fully configured![/bold red]")
+        console.print("   [yellow]Graph RAG is the default retrieval system. Please install all dependencies.[/yellow]")
     
     # Check Ollama
     console.print("\n🤖 [blue]Checking Ollama...[/blue]")
@@ -227,32 +245,38 @@ def setup():
         console.print("🎉 [bold green]Setup Complete! Contextible is ready to use![/bold green]", justify="center")
         console.print("="*60 + "\n")
 
-        # Show next steps
+        # Show next steps with Graph RAG emphasis
         console.print(Panel(
-            """[bold cyan]🚀 Quick Start Guide[/bold cyan]
+            """[bold cyan]🚀 Quick Start Guide (Graph RAG Enabled)[/bold cyan]
 
-[bold]1. Start the Proxy:[/bold]
+[bold]1. Start Neo4j (REQUIRED):[/bold]
+   [yellow]docker run -d --name contextvault-neo4j \\
+     -p 7474:7474 -p 7687:7687 \\
+     -e NEO4J_AUTH=neo4j/password neo4j:latest[/yellow]
+
+[bold]2. Start the Proxy:[/bold]
    [yellow]contextible start[/yellow]
 
-   This starts Contextible on port 11435
+   This starts Contextible on port 11435 with Graph RAG
    (Ollama runs on 11434)
 
-[bold]2. Add Some Context:[/bold]
-   [yellow]contextible context add "I love Python and FastAPI"[/yellow]
-   [yellow]contextible context add "I'm working on an AI project" --type note[/yellow]
+[bold]3. Add Knowledge to Graph RAG:[/bold]
+   [yellow]contextible graph-rag add "John Smith works at Acme Corp" --id doc1[/yellow]
+   [yellow]contextible graph-rag add "Acme raised $50M funding" --id doc2[/yellow]
 
-[bold]3. Check It Works:[/bold]
-   [yellow]contextible system status[/yellow]
-   [yellow]contextible context list[/yellow]
-
-[bold]4. Search Your Memory:[/bold]
-   [yellow]contextible context search "python"[/yellow]
+[bold]4. Check Graph RAG Status:[/bold]
+   [yellow]contextible graph-rag stats[/yellow]
+   [yellow]contextible graph-rag search "Acme Corp" --show-entities[/yellow]
 
 [bold]5. Use With Your AI:[/bold]
    Point your AI client to [cyan]http://localhost:11435[/cyan]
    instead of [dim]http://localhost:11434[/dim]
 
-[bold green]✨ Your AI now has memory![/bold green]""",
+[bold green]✨ Your AI now has Graph RAG memory with entity relationships![/bold green]
+
+[dim]Legacy context commands still work:
+  contextible context add "I love Python"
+  contextible context search "python"[/dim]""",
             title="✨ Next Steps",
             border_style="cyan",
             box=box.ROUNDED

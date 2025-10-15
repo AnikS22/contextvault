@@ -14,7 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import settings, validate_environment
 from .database import init_database, check_database_connection
-from .api import context, permissions, health, routing, thinking, graph_rag
+from .api import context, permissions, health, routing, thinking, graph_rag, mem0_api
 # from .api import mcp  # Temporarily disabled
 from .schemas.responses import ErrorResponse
 from .services.semantic_search import initialize_semantic_search
@@ -242,6 +242,12 @@ app.include_router(
     graph_rag.router,
     prefix="/api",
     tags=["Graph RAG"]
+)
+
+app.include_router(
+    mem0_api.router,
+    prefix="/api",
+    tags=["Mem0 Memory"]
 )
 
 # app.include_router(

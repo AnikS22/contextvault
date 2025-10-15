@@ -73,7 +73,8 @@ class OllamaIntegration(BaseIntegration):
             with get_db_context() as db:
                 session_retrieval_service = ContextRetrievalService(
                     db_session=db,
-                    use_graph_rag=request_use_graph_rag
+                    use_graph_rag=request_use_graph_rag,
+                    use_mem0=settings.enable_mem0  # Enable Mem0 from config
                 )
                 context_result = session_retrieval_service.get_context_for_prompt(
                     model_id=model_id,
@@ -90,13 +91,44 @@ class OllamaIntegration(BaseIntegration):
                 self.logger.debug(f"No relevant context found for model {model_id}")
                 return request_data
             
-            # Format context for injection using our enhanced template system
-            context_strings = [entry.content if hasattr(entry, 'content') else str(entry) for entry in context_entries]
-            formatted_context = self.format_prompt(
-                original_prompt=original_prompt,
-                context_entries=context_strings,
-                template_name=None  # Uses current template from template_manager
-            )
+            # Format context using Cognitive Workspace if enabled
+            if settings.enable_cognitive_workspace:
+                try:
+                    # Use Cognitive Workspace for hierarchical memory management
+                    from ..cognitive import cognitive_workspace
+                    
+                    # Prepare memories for workspace
+                    relevant_memories = [{
+                        "id": entry.id if hasattr(entry, 'id') else str(i),
+                        "content": entry.content if hasattr(entry, 'content') else str(entry),
+                        "metadata": entry.entry_metadata if hasattr(entry, 'entry_metadata') else {},
+                        "relevance_score": getattr(entry, 'relevance_score', 0.5)
+                    } for i, entry in enumerate(context_entries)]
+                    
+                    formatted_context, workspace_stats = cognitive_workspace.load_query_context(
+                        query=original_prompt,
+                        relevant_memories=relevant_memories
+                    )
+                    
+                    self.logger.info(f"🧠 Cognitive Workspace active: {workspace_stats['total_tokens']} tokens across {workspace_stats['memories_processed']} memories")
+                    
+                except Exception as e:
+                    self.logger.warning(f"Cognitive Workspace failed, using fallback: {e}")
+                    # Fallback to simple template formatting
+                    context_strings = [entry.content if hasattr(entry, 'content') else str(entry) for entry in context_entries]
+                    formatted_context = self.format_prompt(
+                        original_prompt=original_prompt,
+                        context_entries=context_strings,
+                        template_name=None
+                    )
+            else:
+                # Use traditional template system
+                context_strings = [entry.content if hasattr(entry, 'content') else str(entry) for entry in context_entries]
+                formatted_context = self.format_prompt(
+                    original_prompt=original_prompt,
+                    context_entries=context_strings,
+                    template_name=None  # Uses current template from template_manager
+                )
             
             # Inject context into request
             modified_request = self._inject_into_request(request_data, formatted_context)
